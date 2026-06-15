@@ -1,0 +1,12 @@
+{
+  "ingestUrl": "https://status.aswincloud.com/api/ingest",
+  "intervalSeconds": 30,
+  "monitors": [
+    {
+      "id": "home-network",
+      "name": "Home Network",
+      "type": "http",
+      "target": "https://torrent.aswincloud.com"
+    }
+  ]
+}

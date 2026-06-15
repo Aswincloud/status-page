@@ -1,0 +1,11 @@
+{
+  "name": "aswincloud-status-prober",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "External heartbeat prober: checks monitors and pushes to the Cloudflare status Worker.",
+  "main": "prober.js",
+  "scripts": {
+    "start": "node prober.js"
+  }
+}

@@ -1,0 +1,21 @@
+services:
+  prober:
+    build: .
+    container_name: aswincloud-status-prober
+    restart: unless-stopped
+    env_file:
+      - .env
+    # Host networking: the prober only makes OUTBOUND HTTPS calls (it pushes
+    # heartbeats and runs http/tcp checks), so it needs no inbound ports or
+    # isolated bridge. This also avoids a Docker IPv6-bridge quirk seen on some
+    # hosts (e.g. TrueNAS). If you prefer bridge networking, remove this line and
+    # add `cap_add: [NET_RAW]` back for ICMP ping checks.
+    network_mode: host
+    # Mount config so you can edit monitors without rebuilding the image.
+    volumes:
+      - ./config.json:/app/config.json:ro
+    logging:
+      driver: json-file
+      options:
+        max-size: "5m"
+        max-file: "3"

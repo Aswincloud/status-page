@@ -1,0 +1,44 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "home-status",
+  "main": "src/index.ts",
+  "compatibility_date": "2025-06-01",
+  // Keep the free workers.dev URL alive as a fallback alongside the custom domain.
+  "workers_dev": true,
+  // AswinCloud account — the one that owns the aswincloud.com zone.
+  "account_id": "e38978124c8fdb38dc80c04cda318ab3",
+  "observability": {
+    "enabled": true
+  },
+
+  // Static Assets: the public/ folder is served directly from Cloudflare's edge.
+  // run_worker_first lists the routes that must hit the Worker BEFORE static
+  // asset matching, so /api/* is handled by our code while everything else
+  // (the HTML/CSS/JS page) is served as a static file with zero Worker cost.
+  "assets": {
+    "directory": "./public",
+    "binding": "ASSETS",
+    "run_worker_first": ["/api/*"]
+  },
+
+  // D1: fill in database_id after `wrangler d1 create status-db`.
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "status-db",
+      "database_id": "d1cebfd7-7e50-4680-a3da-7199d7a4a49b"
+    }
+  ],
+
+  // Cron watchdog: runs every minute to flag stale monitors (dead prober/server),
+  // reconcile incidents, prune old checks, and fire (dormant) alerts.
+  "triggers": {
+    "crons": ["* * * * *"]
+  },
+
+  // Public custom domain. The aswincloud.com zone is in this account, so
+  // Cloudflare provisions DNS + the TLS cert automatically on deploy.
+  "routes": [
+    { "pattern": "status.aswincloud.com", "custom_domain": true }
+  ]
+}
