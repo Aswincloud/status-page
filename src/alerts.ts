@@ -1,7 +1,8 @@
 // Alert hook. Each channel activates only when its env vars are present, so the
-// page works with no alerts, email only, Telegram only, or both.
-//   - Email  : RESEND_API_KEY + ALERT_FROM + ALERT_TO
-//   - Telegram: TELEGRAM_BOT_TOKEN + TELEGRAM_CHAT_ID
+// page works with any combination of channels (or none).
+//   - Email   : RESEND_API_KEY + ALERT_FROM + ALERT_TO
+//   - Slack    : SLACK_BOT_TOKEN + SLACK_CHANNEL
+//   - Telegram : TELEGRAM_BOT_TOKEN + TELEGRAM_CHAT_ID
 
 import type { Env, MonitorRow } from "./db";
 
@@ -31,7 +32,48 @@ export async function notify(env: Env, monitor: MonitorRow, ev: AlertEvent): Pro
     ? `${monitor.name} is DOWN since ${when}.`
     : `${monitor.name} recovered — was down for ${fmtDuration(ev.durationMs ?? 0)}.`;
 
-  await Promise.allSettled([sendEmail(env, subject, line, monitor, ev), sendTelegram(env, emoji, line)]);
+  await Promise.allSettled([
+    sendEmail(env, subject, line, monitor, ev),
+    sendSlack(env, monitor, line, ev),
+    sendTelegram(env, emoji, line),
+  ]);
+}
+
+// ---- Slack (bot token, chat.postMessage) ----
+async function sendSlack(env: Env, monitor: MonitorRow, line: string, ev: AlertEvent): Promise<void> {
+  if (!env.SLACK_BOT_TOKEN || !env.SLACK_CHANNEL) return;
+
+  const down = ev.kind === "down";
+  const emoji = down ? "🔴" : "🟢";
+  const headline = `${emoji} ${monitor.name} ${down ? "is DOWN" : "recovered"}`;
+
+  try {
+    const res = await fetch("https://slack.com/api/chat.postMessage", {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${env.SLACK_BOT_TOKEN}`,
+        "content-type": "application/json; charset=utf-8",
+      },
+      body: JSON.stringify({
+        channel: env.SLACK_CHANNEL,
+        text: headline, // fallback / notification text
+        blocks: [
+          { type: "section", text: { type: "mrkdwn", text: `*${headline}*\n${line}` } },
+          {
+            type: "context",
+            elements: [
+              { type: "mrkdwn", text: `${monitor.type} · ${monitor.target}` },
+              { type: "mrkdwn", text: "<https://status.aswincloud.com|View status page>" },
+            ],
+          },
+        ],
+      }),
+    });
+    const j: { ok?: boolean; error?: string } = await res.json();
+    if (!j.ok) console.error("slack send failed", j.error);
+  } catch (err) {
+    console.error("slack error", err);
+  }
 }
 
 // ---- Email via Resend ----

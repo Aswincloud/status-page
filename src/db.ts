@@ -11,6 +11,9 @@ export interface Env {
   RESEND_API_KEY?: string;
   ALERT_FROM?: string; // e.g. "aswincloud status <status@aswincloud.com>"
   ALERT_TO?: string; // e.g. "aswin@aswincloud.com"
+  // Slack (bot token + channel id):
+  SLACK_BOT_TOKEN?: string;
+  SLACK_CHANNEL?: string; // channel ID, e.g. C0XXXXXXXXX
 }
 
 export interface MonitorRow {
