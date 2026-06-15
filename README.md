@@ -183,3 +183,14 @@ Open `http://localhost:8787`.
   aggregates and the `/api/status` JSON is edge-cached ~15s.
 - `STALE_MS` (2 min) and `RETENTION_MS` (90 d) live in `src/db.ts`.
 - Check interval lives in `prober/config.json` (`intervalSeconds`).
+
+---
+
+## Continuous deployment
+
+This repo is connected to **Cloudflare Workers Builds**. Every push to `main`
+runs `npx wrangler deploy` and ships the Worker + page automatically; pushes to
+other branches run `npx wrangler versions upload` (preview versions).
+
+> The prober is **not** part of this pipeline — it runs as a container on an
+> external box. To update it: `git pull && docker compose up -d --build` there.
