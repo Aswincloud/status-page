@@ -143,21 +143,31 @@ immediately: `npx wrangler d1 execute status-db --remote --command "DELETE FROM 
 
 ---
 
-## Turn on alerts (later)
+## Alerts
 
-Alerts are wired but off. To enable Telegram down/recovery messages:
+`src/alerts.ts` sends a notification on every down/recovery transition. Each
+channel activates only when its secrets are set — so you can run with no alerts,
+email only, Telegram only, or both.
 
-1. Create a bot via **@BotFather**, copy its token.
-2. Message your bot once, then get your chat id from
-   `https://api.telegram.org/bot<TOKEN>/getUpdates` (look for `chat.id`).
-3. Set the secrets and redeploy:
-   ```bash
-   npx wrangler secret put TELEGRAM_BOT_TOKEN
-   npx wrangler secret put TELEGRAM_CHAT_ID
-   npx wrangler deploy
-   ```
+**Email (Resend) — active.** Sends from a verified `aswincloud.com` address to
+`aswin@aswincloud.com`. Secrets:
 
-No code change needed — `src/alerts.ts` activates as soon as both secrets exist.
+```bash
+npx wrangler secret put RESEND_API_KEY     # from resend.com (domain must be verified)
+npx wrangler secret put ALERT_FROM         # e.g. "aswincloud status <status@aswincloud.com>"
+npx wrangler secret put ALERT_TO           # e.g. aswin@aswincloud.com  (comma-separated for several)
+```
+
+**Telegram (optional).** Create a bot via **@BotFather**, message it once, read
+your chat id from `https://api.telegram.org/bot<TOKEN>/getUpdates`:
+
+```bash
+npx wrangler secret put TELEGRAM_BOT_TOKEN
+npx wrangler secret put TELEGRAM_CHAT_ID
+```
+
+Secrets are stored in Cloudflare, never in this repo. After setting them, just
+push to `main` (or `npx wrangler deploy`) — no code change needed.
 
 ---
 

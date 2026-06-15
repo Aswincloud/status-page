@@ -4,9 +4,13 @@ export interface Env {
   DB: D1Database;
   ASSETS: Fetcher;
   INGEST_TOKEN?: string;
-  // Dormant alert channels (optional — alerts.ts no-ops when unset):
+  // Alert channels (optional — alerts.ts no-ops for a channel when its vars are unset):
   TELEGRAM_BOT_TOKEN?: string;
   TELEGRAM_CHAT_ID?: string;
+  // Email via Resend:
+  RESEND_API_KEY?: string;
+  ALERT_FROM?: string; // e.g. "aswincloud status <status@aswincloud.com>"
+  ALERT_TO?: string; // e.g. "aswin@aswincloud.com"
 }
 
 export interface MonitorRow {
