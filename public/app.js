@@ -90,48 +90,152 @@
     }
   }
 
-  // ---- sparkline (SVG path) ----
-  function sparkline(points) {
-    const W = 220,
-      H = 40,
-      pad = 3;
+  // ---- latency chart (per-monitor response time, time-series) ----
+  // Larger than a sparkline: y-axis max label, gridline, gradient area, line
+  // that breaks on downtime. viewBox units; CSS sizes it.
+  function latencyChart(points, uid) {
+    const W = 600,
+      H = 96,
+      padT = 8,
+      padB = 6,
+      padX = 4;
     const lat = points.map((p) => p.latency_ms).filter((v) => v != null);
     if (lat.length === 0) {
-      return `<svg class="spark" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none"></svg>`;
+      return `<svg class="chart" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none"></svg>`;
     }
-    const min = Math.min(...lat);
     const max = Math.max(...lat);
-    const span = max - min || 1;
+    const min = Math.min(...lat);
+    const top = max * 1.15 || 1; // headroom; baseline at 0 for honest scale
     const n = points.length;
-    const x = (i) => pad + (i / Math.max(1, n - 1)) * (W - 2 * pad);
-    const y = (v) => H - pad - ((v - min) / span) * (H - 2 * pad);
+    const x = (i) => padX + (i / Math.max(1, n - 1)) * (W - 2 * padX);
+    const y = (v) => padT + (1 - v / top) * (H - padT - padB);
 
-    // Build path, breaking the line at down points (null latency).
-    let d = "";
+    let line = "";
     let pen = false;
     points.forEach((p, i) => {
       if (p.latency_ms == null) {
         pen = false;
         return;
       }
-      d += `${pen ? "L" : "M"}${x(i).toFixed(1)} ${y(p.latency_ms).toFixed(1)} `;
+      line += `${pen ? "L" : "M"}${x(i).toFixed(1)} ${y(p.latency_ms).toFixed(1)} `;
       pen = true;
     });
-
-    // Area fill under the line (for the contiguous tail).
     const lastUp = points[n - 1].latency_ms != null;
-    let area = "";
-    if (lastUp) {
-      // simple gradient fill from the visible line down
-      area = `<path d="${d}L${x(n - 1).toFixed(1)} ${H} L${x(0).toFixed(1)} ${H} Z" fill="url(#sg)" opacity="0.12"/>`;
-    }
+    const area = lastUp
+      ? `<path d="${line}L${x(n - 1).toFixed(1)} ${H - padB} L${x(0).toFixed(1)} ${H - padB} Z" fill="url(#lg-${uid})" opacity="0.16"/>`
+      : "";
+    const midY = y(top / 2).toFixed(1);
+
     return `
-      <svg class="spark" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none">
-        <defs><linearGradient id="sg" x1="0" y1="0" x2="0" y2="1">
+      <svg class="chart" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none">
+        <defs><linearGradient id="lg-${uid}" x1="0" y1="0" x2="0" y2="1">
           <stop offset="0" stop-color="var(--up)"/><stop offset="1" stop-color="var(--up)" stop-opacity="0"/>
         </linearGradient></defs>
+        <line class="grid" x1="0" y1="${midY}" x2="${W}" y2="${midY}"/>
         ${area}
-        <path d="${d}" fill="none" stroke="var(--up)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+        <path d="${line}" fill="none" stroke="var(--up)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" vector-effect="non-scaling-stroke"/>
+      </svg>`;
+  }
+
+  // ---- internet speed panel ----
+  let speedUid = 0;
+  function renderSpeed(speed) {
+    const section = $("#speed");
+    if (!speed || !speed.latest) {
+      section.hidden = true;
+      return;
+    }
+    section.hidden = false;
+    const card = $("#speed-card");
+    const s = speed;
+    const uid = "sp" + speedUid++;
+
+    // dual-area throughput chart (download teal, upload violet)
+    const chart = throughputChart(s.series, uid);
+    const fmt = (v) => (v == null ? "—" : v >= 100 ? Math.round(v) : v.toFixed(1));
+    const pingTxt = s.latest.ping != null ? `${s.latest.ping.toFixed(1)} ms` : "—";
+
+    const serverLabel = [s.isp, s.server].filter(Boolean).join(" · ") || "speed test";
+    card.innerHTML = `
+      <div class="speed-top">
+        <div>
+          <div class="speed-title">Internet speed</div>
+          <div class="speed-sub">${escapeHtml(serverLabel)}</div>
+        </div>
+        <div class="speed-ping">
+          <div class="stat-label">Ping</div>
+          <div class="stat-val">${pingTxt}</div>
+        </div>
+      </div>
+
+      <div class="speed-now">
+        <div class="reading dl">
+          <div class="reading-head"><span class="reading-dot"></span><span class="reading-label">Download</span></div>
+          <div class="reading-val">${fmt(s.latest.down)}<span class="unit">Mbps</span></div>
+          <div class="reading-meta">avg ${fmt(s.avgDown)} · peak ${fmt(s.peakDown)}</div>
+        </div>
+        <div class="reading ul">
+          <div class="reading-head"><span class="reading-dot"></span><span class="reading-label">Upload</span></div>
+          <div class="reading-val">${fmt(s.latest.up)}<span class="unit">Mbps</span></div>
+          <div class="reading-meta">avg ${fmt(s.avgUp)} · peak ${fmt(s.peakUp)}</div>
+        </div>
+      </div>
+
+      ${chart}
+
+      <div class="speed-legend">
+        <span class="key"><span class="swatch dl"></span>Download</span>
+        <span class="key"><span class="swatch ul"></span>Upload</span>
+        <span class="when">last ${s.windowHours}h · tested ${relTime(s.latest.ts)}</span>
+      </div>
+    `;
+  }
+
+  // dual stacked-area chart: download + upload Mbps over the window
+  function throughputChart(series, uid) {
+    const W = 600,
+      H = 120,
+      padT = 8,
+      padB = 6,
+      padX = 4;
+    if (!series || series.length === 0) {
+      return `<div class="speed-empty">Waiting for the first speed test…</div>`;
+    }
+    const allVals = series.flatMap((p) => [p.down, p.up]);
+    const top = Math.max(...allVals) * 1.15 || 1;
+    const n = series.length;
+    const x = (i) => padX + (i / Math.max(1, n - 1)) * (W - 2 * padX);
+    const y = (v) => padT + (1 - v / top) * (H - padT - padB);
+
+    const pathFor = (key) => {
+      let d = "";
+      series.forEach((p, i) => {
+        d += `${i ? "L" : "M"}${x(i).toFixed(1)} ${y(p[key]).toFixed(1)} `;
+      });
+      return d;
+    };
+    const dlLine = pathFor("down");
+    const ulLine = pathFor("up");
+    const baseline = H - padB;
+    const dlArea = `${dlLine}L${x(n - 1).toFixed(1)} ${baseline} L${x(0).toFixed(1)} ${baseline} Z`;
+    const ulArea = `${ulLine}L${x(n - 1).toFixed(1)} ${baseline} L${x(0).toFixed(1)} ${baseline} Z`;
+    const midY = y(top / 2).toFixed(1);
+
+    return `
+      <svg class="speed-chart" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none">
+        <defs>
+          <linearGradient id="dl-${uid}" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0" stop-color="var(--dl)" stop-opacity="0.35"/><stop offset="1" stop-color="var(--dl)" stop-opacity="0"/>
+          </linearGradient>
+          <linearGradient id="ul-${uid}" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0" stop-color="var(--ul)" stop-opacity="0.30"/><stop offset="1" stop-color="var(--ul)" stop-opacity="0"/>
+          </linearGradient>
+        </defs>
+        <line class="grid" x1="0" y1="${midY}" x2="${W}" y2="${midY}"/>
+        <path d="${ulArea}" fill="url(#ul-${uid})"/>
+        <path d="${dlArea}" fill="url(#dl-${uid})"/>
+        <path d="${ulLine}" fill="none" stroke="var(--ul)" stroke-width="2" stroke-linejoin="round" vector-effect="non-scaling-stroke"/>
+        <path d="${dlLine}" fill="none" stroke="var(--dl)" stroke-width="2" stroke-linejoin="round" vector-effect="non-scaling-stroke"/>
       </svg>`;
   }
 
@@ -184,10 +288,11 @@
         <div class="stat"><div class="stat-label">30 days</div><div class="stat-val ${m.uptime.d30 == null ? "muted" : ""}">${pct(m.uptime.d30)}</div></div>
       </div>
 
-      <div class="spark-row">
-        ${sparkline(m.latency)}
-        <div class="spark-meta">${lastLatency}<br><span style="color:var(--text-faint)">checked ${relTime(m.last_checked)}</span></div>
+      <div class="chart-head">
+        <span class="chart-title">Response time</span>
+        <span class="chart-now">${lastLatency} · <span style="color:var(--text-faint)">checked ${relTime(m.last_checked)}</span></span>
       </div>
+      ${latencyChart(m.latency, m.id)}
     `;
 
     // wire tooltips on day cells
@@ -250,6 +355,7 @@
         data.monitors.forEach((m) => mon.appendChild(renderCard(m)));
       }
 
+      renderSpeed(data.speed);
       renderIncidents(data.incidents);
       $("#updated").textContent = "Updated " + relTime(data.generated_at);
     } catch (err) {

@@ -2,8 +2,16 @@
 // Static assets (the page) are served by Cloudflare before the Worker runs,
 // per the `assets.run_worker_first` config — so only /api/* reaches here.
 
-import { Env, RETENTION_MS, STALE_MS, listMonitors, latestCheck, pruneOldChecks } from "./db";
-import { applyCheck, handleIngest, handleStatus } from "./api";
+import {
+  Env,
+  RETENTION_MS,
+  STALE_MS,
+  listMonitors,
+  latestCheck,
+  pruneOldChecks,
+  pruneOldSpeedtests,
+} from "./db";
+import { applyCheck, handleIngest, handleSpeedtest, handleStatus } from "./api";
 
 export default {
   async fetch(req: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
@@ -11,6 +19,9 @@ export default {
 
     if (url.pathname === "/api/ingest" && req.method === "POST") {
       return handleIngest(req, env);
+    }
+    if (url.pathname === "/api/speedtest" && req.method === "POST") {
+      return handleSpeedtest(req, env);
     }
     if (url.pathname === "/api/status" && req.method === "GET") {
       return handleStatus(req, env, ctx);
@@ -41,5 +52,6 @@ export default {
     }
 
     await pruneOldChecks(env.DB, now - RETENTION_MS);
+    await pruneOldSpeedtests(env.DB, now - RETENTION_MS);
   },
 };

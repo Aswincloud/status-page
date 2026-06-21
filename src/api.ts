@@ -3,9 +3,11 @@
 import {
   Env,
   IncomingCheck,
+  IncomingSpeedtest,
   MonitorRow,
   STALE_MS,
   insertCheck,
+  insertSpeedtest,
   latestCheck,
   listMonitors,
   openIncident,
@@ -18,6 +20,7 @@ import {
   dayBuckets,
   latencySeries,
   recentIncidents,
+  speedSummary,
   uptimePct,
 } from "./stats";
 
@@ -99,6 +102,34 @@ export async function handleIngest(req: Request, env: Env): Promise<Response> {
   return json({ ok: true, accepted });
 }
 
+// POST /api/speedtest — authenticated speed sample from the home speed agent.
+export async function handleSpeedtest(req: Request, env: Env): Promise<Response> {
+  const auth = req.headers.get("authorization") ?? "";
+  const token = auth.startsWith("Bearer ") ? auth.slice(7) : "";
+  if (!env.INGEST_TOKEN || token !== env.INGEST_TOKEN) {
+    return json({ error: "unauthorized" }, { status: 401 });
+  }
+
+  let body: IncomingSpeedtest;
+  try {
+    body = await req.json();
+  } catch {
+    return json({ error: "invalid json" }, { status: 400 });
+  }
+  if (typeof body.download_mbps !== "number" || typeof body.upload_mbps !== "number") {
+    return json({ error: "download_mbps and upload_mbps required" }, { status: 400 });
+  }
+
+  await insertSpeedtest(env.DB, Date.now(), {
+    download_mbps: body.download_mbps,
+    upload_mbps: body.upload_mbps,
+    ping_ms: typeof body.ping_ms === "number" ? body.ping_ms : null,
+    server: typeof body.server === "string" ? body.server : null,
+    isp: typeof body.isp === "string" ? body.isp : null,
+  });
+  return json({ ok: true });
+}
+
 // GET /api/status — public snapshot the page polls. Cached ~15s at the edge.
 export async function handleStatus(req: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
   const cache = caches.default;
@@ -137,7 +168,10 @@ export async function handleStatus(req: Request, env: Env, ctx: ExecutionContext
     });
   }
 
-  const incidents = await recentIncidents(env.DB, now);
+  const [incidents, speed] = await Promise.all([
+    recentIncidents(env.DB, now),
+    speedSummary(env.DB, now),
+  ]);
 
   // Overall: operational if all up, major if all down, partial otherwise.
   const total = out.length;
@@ -145,7 +179,7 @@ export async function handleStatus(req: Request, env: Env, ctx: ExecutionContext
   const overall = total === 0 ? "unknown" : upCount === total ? "operational" : upCount === 0 ? "major" : "partial";
 
   const res = json(
-    { generated_at: now, overall, monitors: out, incidents },
+    { generated_at: now, overall, monitors: out, incidents, speed },
     { headers: { "cache-control": "public, max-age=15" } },
   );
   ctx.waitUntil(cache.put(cacheKey, res.clone()));

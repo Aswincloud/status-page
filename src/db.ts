@@ -120,3 +120,31 @@ export async function resolveIncident(db: D1Database, incidentId: number, at: nu
 export async function pruneOldChecks(db: D1Database, olderThan: number): Promise<void> {
   await db.prepare(`DELETE FROM checks WHERE ts < ?`).bind(olderThan).run();
 }
+
+// ---- speed tests ----
+
+export interface IncomingSpeedtest {
+  download_mbps: number;
+  upload_mbps: number;
+  ping_ms?: number | null;
+  server?: string | null;
+  isp?: string | null;
+}
+
+export async function insertSpeedtest(
+  db: D1Database,
+  ts: number,
+  s: IncomingSpeedtest,
+): Promise<void> {
+  await db
+    .prepare(
+      `INSERT INTO speedtests (ts, download_mbps, upload_mbps, ping_ms, server, isp)
+       VALUES (?, ?, ?, ?, ?, ?)`,
+    )
+    .bind(ts, s.download_mbps, s.upload_mbps, s.ping_ms ?? null, s.server ?? null, s.isp ?? null)
+    .run();
+}
+
+export async function pruneOldSpeedtests(db: D1Database, olderThan: number): Promise<void> {
+  await db.prepare(`DELETE FROM speedtests WHERE ts < ?`).bind(olderThan).run();
+}

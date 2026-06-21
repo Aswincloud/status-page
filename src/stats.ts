@@ -113,6 +113,87 @@ export interface IncidentView {
   resolved_at: number | null;
 }
 
+export interface SpeedPoint {
+  ts: number;
+  down: number; // Mbps
+  up: number; // Mbps
+  ping: number | null;
+}
+
+export interface SpeedSummary {
+  latest: SpeedPoint | null;
+  avgDown: number | null;
+  avgUp: number | null;
+  peakDown: number | null;
+  peakUp: number | null;
+  server: string | null; // from the most recent sample
+  isp: string | null;
+  windowHours: number;
+  series: SpeedPoint[]; // oldest → newest, for the chart
+}
+
+// Internet-speed summary over a trailing window (default 24h), down-sampled.
+export async function speedSummary(
+  db: D1Database,
+  now: number,
+  windowMs = 24 * 60 * 60 * 1000,
+  maxPoints = 96,
+): Promise<SpeedSummary> {
+  const since = now - windowMs;
+  const { results } = await db
+    .prepare(
+      `SELECT ts, download_mbps AS down, upload_mbps AS up, ping_ms AS ping, server, isp
+       FROM speedtests WHERE ts >= ? ORDER BY ts ASC`,
+    )
+    .bind(since)
+    .all<{ ts: number; down: number; up: number; ping: number | null; server: string | null; isp: string | null }>();
+  const rows = results ?? [];
+
+  const empty: SpeedSummary = {
+    latest: null,
+    avgDown: null,
+    avgUp: null,
+    peakDown: null,
+    peakUp: null,
+    server: null,
+    isp: null,
+    windowHours: Math.round(windowMs / 3_600_000),
+    series: [],
+  };
+  if (rows.length === 0) return empty;
+
+  const avgDown = rows.reduce((a, r) => a + r.down, 0) / rows.length;
+  const avgUp = rows.reduce((a, r) => a + r.up, 0) / rows.length;
+  const peakDown = Math.max(...rows.map((r) => r.down));
+  const peakUp = Math.max(...rows.map((r) => r.up));
+  const last = rows[rows.length - 1];
+
+  // Down-sample for the chart payload.
+  let series: SpeedPoint[];
+  if (rows.length <= maxPoints) {
+    series = rows.map((r) => ({ ts: r.ts, down: r.down, up: r.up, ping: r.ping }));
+  } else {
+    const step = rows.length / maxPoints;
+    series = [];
+    for (let i = 0; i < maxPoints; i++) {
+      const r = rows[Math.floor(i * step)];
+      series.push({ ts: r.ts, down: r.down, up: r.up, ping: r.ping });
+    }
+  }
+
+  return {
+    latest: { ts: last.ts, down: last.down, up: last.up, ping: last.ping },
+    avgDown,
+    avgUp,
+    peakDown,
+    peakUp,
+    server: last.server ?? null,
+    isp: last.isp ?? null,
+    windowHours: Math.round(windowMs / 3_600_000),
+    series,
+  };
+}
+
 // Recent incidents across all monitors (most recent first), joined to names.
 export async function recentIncidents(
   db: D1Database,

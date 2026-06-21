@@ -27,6 +27,19 @@ CREATE TABLE IF NOT EXISTS incidents (
 );
 CREATE INDEX IF NOT EXISTS idx_incidents_monitor ON incidents(monitor_id, started_at);
 
+-- Internet speed-test samples, pushed by the home speed agent (runs AT home so
+-- it measures the real home connection). Mbps are stored as REAL.
+CREATE TABLE IF NOT EXISTS speedtests (
+  id            INTEGER PRIMARY KEY AUTOINCREMENT,
+  ts            INTEGER NOT NULL,  -- unix ms
+  download_mbps REAL NOT NULL,
+  upload_mbps   REAL NOT NULL,
+  ping_ms       REAL,
+  server        TEXT,              -- e.g. "BSNL · Chennai"
+  isp           TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_speedtests_ts ON speedtests(ts);
+
 -- Seed the starter monitor so the page renders something on first paint, before
 -- the prober's first heartbeat arrives. The prober will upsert this same row.
 INSERT OR IGNORE INTO monitors (id, name, type, target, created_at)

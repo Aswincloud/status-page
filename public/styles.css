@@ -12,6 +12,13 @@
   --warn-soft: rgba(255, 214, 10, 0.16);
   --nodata: #3a3a42;
 
+  /* Throughput accents — deliberately NOT green/red, which mean up/down here.
+     Teal = download, violet = upload. Reads as "network data", never status. */
+  --dl: #2dd4bf;
+  --dl-soft: rgba(45, 212, 191, 0.16);
+  --ul: #a78bfa;
+  --ul-soft: rgba(167, 139, 250, 0.16);
+
   --radius: 14px;
   --radius-sm: 8px;
   --maxw: 760px;
@@ -208,6 +215,69 @@ body {
 .spark { flex: 1; height: 40px; }
 .spark-meta { color: var(--text-dim); font-size: 12px; text-align: right; flex: none; white-space: nowrap; }
 .spark-meta b { color: var(--text); font-variant-numeric: tabular-nums; }
+
+/* ---- larger latency chart (per-monitor response time) ---- */
+.chart-head {
+  display: flex; align-items: baseline; justify-content: space-between;
+  margin: 16px 0 6px;
+}
+.chart-title { font-size: 12px; color: var(--text-dim); }
+.chart-now { font-size: 12.5px; color: var(--text-faint); }
+.chart-now b { color: var(--text); font-variant-numeric: tabular-nums; }
+.chart { width: 100%; height: 96px; display: block; }
+.chart .grid { stroke: var(--border-soft); stroke-width: 1; }
+.chart .axis-label { fill: var(--text-faint); font-size: 9px; font-family: var(--mono); }
+.chart-x { display: flex; justify-content: space-between; color: var(--text-faint); font-size: 11px; margin-top: 4px; }
+
+/* ---- internet speed panel ---- */
+.speed { margin-top: 26px; }
+.speed-card {
+  padding: 20px 22px 18px;
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+  background: var(--card);
+  box-shadow: var(--shadow);
+}
+.speed-top {
+  display: flex; align-items: flex-start; justify-content: space-between;
+  gap: 12px; margin-bottom: 4px;
+}
+.speed-title { font-weight: 620; font-size: 15.5px; letter-spacing: -0.01em; }
+.speed-sub { color: var(--text-faint); font-size: 12px; font-family: var(--mono); margin-top: 1px; }
+.speed-ping { text-align: right; flex: none; }
+.speed-ping .stat-label { text-align: right; }
+
+/* the two big current readings */
+.speed-now {
+  display: grid; grid-template-columns: 1fr 1fr;
+  gap: 12px; margin: 14px 0 4px;
+}
+.reading {
+  border: 1px solid var(--border-soft); border-radius: var(--radius-sm);
+  padding: 12px 14px; background: var(--card-2);
+}
+.reading-head { display: flex; align-items: center; gap: 7px; }
+.reading-dot { width: 9px; height: 9px; border-radius: 2px; flex: none; }
+.reading.dl .reading-dot { background: var(--dl); }
+.reading.ul .reading-dot { background: var(--ul); }
+.reading-label { font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-faint); }
+.reading-val { font-size: 26px; font-weight: 680; letter-spacing: -0.02em; margin-top: 4px; font-variant-numeric: tabular-nums; }
+.reading-val .unit { font-size: 13px; font-weight: 550; color: var(--text-dim); margin-left: 3px; }
+.reading-meta { font-size: 11.5px; color: var(--text-faint); margin-top: 2px; font-variant-numeric: tabular-nums; }
+
+/* the throughput chart */
+.speed-chart { width: 100%; height: 120px; display: block; margin-top: 8px; }
+.speed-chart .grid { stroke: var(--border-soft); stroke-width: 1; }
+.speed-legend {
+  display: flex; gap: 16px; align-items: center; margin-top: 6px;
+  color: var(--text-dim); font-size: 12px;
+}
+.speed-legend .key { display: inline-flex; align-items: center; gap: 6px; }
+.speed-legend .swatch { width: 10px; height: 10px; border-radius: 2px; }
+.speed-legend .swatch.dl { background: var(--dl); }
+.speed-legend .swatch.ul { background: var(--ul); }
+.speed-legend .when { margin-left: auto; color: var(--text-faint); }
+.speed-empty { color: var(--text-faint); font-size: 13px; padding: 10px 2px 4px; }
 
 /* ---- incidents ---- */
 .incidents { margin-top: 30px; }

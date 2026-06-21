@@ -1,0 +1,18 @@
+services:
+  speedagent:
+    build: .
+    container_name: aswincloud-speedagent
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      # Override per-host if needed:
+      - INTERVAL_SECONDS=900   # 15 min
+    # Host networking: outbound-only, and it measures THIS host's connection.
+    # Also sidesteps the Docker IPv6-bridge quirk on some hosts (e.g. TrueNAS).
+    network_mode: host
+    logging:
+      driver: json-file
+      options:
+        max-size: "5m"
+        max-file: "3"

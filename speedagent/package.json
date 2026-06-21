@@ -1,0 +1,9 @@
+{
+  "name": "aswincloud-status-speedagent",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Home speed agent: runs Ookla speed tests and pushes Mbps to the status Worker.",
+  "main": "agent.js",
+  "scripts": { "start": "node agent.js" }
+}
