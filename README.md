@@ -62,7 +62,9 @@ home and pushes heartbeats in.
 - **Per-monitor cards** with a live status pill
 - **90-day uptime bar** — hover any day for that day's uptime %
 - **Uptime %** over 24h / 7d / 30d
-- **Response-time sparkline** (last 2 hours, SVG, breaks the line on downtime)
+- **Response-time chart** (last 2 hours, SVG, breaks the line on downtime)
+- **Internet speed graph** — real download/upload Mbps over time (current · avg · peak),
+  measured **at home** by a separate speed agent so it reflects your actual connection
 - **Incident timeline** — ongoing + resolved, with durations
 - **Alerts** on every down/recovery — **Email (Resend)**, **Slack**, and **Telegram**, each independent
 - **Dark / light theme** toggle · fully responsive · **zero frontend dependencies**
@@ -84,7 +86,8 @@ src/
   stats.ts         uptime %, 90-day buckets, latency series, incidents
   alerts.ts        email / Slack / Telegram — each activates only when its secrets exist
 public/            The status page — index.html · styles.css · app.js
-prober/            The Docker prober (copied to the external server)
+prober/            Docker prober — reachability checks (runs OUTSIDE home)
+speedagent/        Docker speed agent — Ookla speed tests (runs AT home)
 ```
 
 ---
@@ -131,6 +134,28 @@ docker compose logs -f          # expect: "ok — home-network:140ms"
 ```
 
 `restart: unless-stopped` + Docker-on-boot keep it running across reboots and crashes.
+
+> **Reachability** (the prober) and **speed** (the agent below) run on *different* boxes
+> on purpose. The prober must be **outside** home to tell when home is down; the speed
+> agent must be **inside** home to measure your real connection.
+
+---
+
+## 📶 Part 3 — Run the speed agent (at home)
+
+Measures real home download/upload with the official Ookla CLI and pushes every 15 min.
+Run it **on a machine at home** (the one whose internet you want to graph):
+
+```bash
+cd speedagent
+cp .env.example .env
+nano .env                       # INGEST_TOKEN = the same value as everything else
+docker compose up -d
+docker compose logs -f          # expect: "ok — ↓329.8 ↑333.4 Mbps · ping 6.8ms · BSNL"
+```
+
+Each test uses real bandwidth (~25 MB down + ~10 MB up). Change the cadence with
+`INTERVAL_SECONDS` in `docker-compose.yml`. The image auto-detects x86_64 / arm64.
 
 ---
 
