@@ -90,7 +90,9 @@
   // cfg = { points, vb:{W,H,padT,padB,padX}, top, series:[{key,label,color,unit}] }
   function attachChartHover(svg, cfg) {
     if (!svg || !cfg || !cfg.points || cfg.points.length === 0 || cfg.top == null) return;
-    const { points, vb, top, series } = cfg;
+    const { points, vb, series } = cfg;
+    const top = cfg.top;
+    const base = cfg.base ?? 0;
     const n = points.length;
     svg.style.cursor = "crosshair";
 
@@ -118,7 +120,7 @@
           rows.push(`<span class="tip-key" style="color:var(--text-faint,#999)">${s.label}: down</span>`);
           return;
         }
-        const vbY = vb.padT + (1 - v / top) * (vb.H - vb.padT - vb.padB);
+        const vbY = vb.padT + (1 - (v - base) / (top - base)) * (vb.H - vb.padT - vb.padB);
         const py = rect.top + (vbY / vb.H) * rect.height;
         if (dot) {
           dot.style.left = px + "px";
@@ -166,9 +168,65 @@
     }
   }
 
+  // ---- chart scale + axes ----------------------------------------------------
+  // Round a number to a "nice" 1/2/5 × 10ⁿ value (for tick steps & bounds).
+  function niceNum(x, round) {
+    if (!(x > 0)) return 1;
+    const e = Math.floor(Math.log10(x));
+    const f = x / Math.pow(10, e);
+    const nf = round
+      ? f < 1.5 ? 1 : f < 3 ? 2 : f < 7 ? 5 : 10
+      : f <= 1 ? 1 : f <= 2 ? 2 : f <= 5 ? 5 : 10;
+    return nf * Math.pow(10, e);
+  }
+
+  // Smart Y-scale: zero baseline normally; if the data sits in a very tight band
+  // high above zero (e.g. a rock-steady 330 Mbps), lift the baseline so the
+  // variation is visible — without fully zooming away the zero reference.
+  // Returns { base, top, ticks } with clean rounded bounds.
+  function computeScale(vals) {
+    const dMin = Math.min(...vals);
+    const dMax = Math.max(...vals);
+    const range = dMax - dMin;
+    let lo = 0;
+    if (dMin > 0 && range < 0.08 * dMax) {
+      // tight band → partial baseline lift (keeps some zero context)
+      lo = Math.max(0, dMin - range * 1.2 - dMax * 0.04);
+    }
+    const step = niceNum((dMax - lo) / 3 || 1, true);
+    const base = Math.max(0, Math.floor(lo / step) * step);
+    const headroom = (dMax - base) * 0.04;
+    let top = Math.ceil((dMax + headroom) / step) * step;
+    if (top <= base) top = base + step;
+    const ticks = [];
+    for (let v = base; v <= top + 1e-9; v += step) ticks.push(+v.toFixed(6));
+    return { base, top, ticks };
+  }
+
+  const fmtTick = (t) => (t >= 1000 ? t / 1000 + "k" : String(Math.round(t)));
+
+  // Build gridlines (SVG) + Y labels + X time labels for a scale.
+  function buildAxes(scale, vb, points) {
+    const { base, top, ticks } = scale;
+    const { W, H, padT, padB } = vb;
+    const yv = (v) => padT + (1 - (v - base) / (top - base)) * (H - padT - padB);
+    const grid = ticks
+      .map((t) => `<line class="grid" x1="0" y1="${yv(t).toFixed(1)}" x2="${W}" y2="${yv(t).toFixed(1)}"/>`)
+      .join("");
+    const yLabels = ticks
+      .map((t) => `<span style="top:${((yv(t) / H) * 100).toFixed(2)}%">${fmtTick(t)}</span>`)
+      .join("");
+    let xLabels = "";
+    if (points && points.length > 1) {
+      const f = (ts) => new Date(ts).toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" });
+      xLabels = `<span>${f(points[0].ts)}</span><span>${f(points[points.length - 1].ts)}</span>`;
+    }
+    return { grid, yLabels, xLabels };
+  }
+
   // ---- latency chart (per-monitor response time, time-series) ----
-  // Larger than a sparkline: y-axis max label, gridline, gradient area, line
-  // that breaks on downtime. viewBox units; CSS sizes it.
+  // Stretchy SVG (line + gridlines); axis numbers are HTML overlays so they
+  // don't distort. viewBox units; CSS sizes it.
   function latencyChart(points, uid) {
     const vb = { W: 600, H: 96, padT: 8, padB: 6, padX: 4 };
     const { W, H, padT, padB, padX } = vb;
@@ -177,11 +235,11 @@
     if (lat.length === 0) {
       return { html: `<svg class="chart" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none"></svg>`, hover: null };
     }
-    const max = Math.max(...lat);
-    const top = max * 1.15 || 1; // headroom; baseline at 0 for honest scale
+    const scale = computeScale(lat);
+    const { base, top } = scale;
     const n = points.length;
     const x = (i) => padX + (i / Math.max(1, n - 1)) * (W - 2 * padX);
-    const y = (v) => padT + (1 - v / top) * (H - padT - padB);
+    const y = (v) => padT + (1 - (v - base) / (top - base)) * (H - padT - padB);
 
     let line = "";
     let pen = false;
@@ -197,23 +255,28 @@
     const area = lastUp
       ? `<path d="${line}L${x(n - 1).toFixed(1)} ${H - padB} L${x(0).toFixed(1)} ${H - padB} Z" fill="url(#lg-${uid})" opacity="0.16"/>`
       : "";
-    const midY = y(top / 2).toFixed(1);
+    const ax = buildAxes(scale, vb, points);
 
     const html = `
-      <svg class="chart" data-chart="${chartId}" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none">
-        <defs><linearGradient id="lg-${uid}" x1="0" y1="0" x2="0" y2="1">
-          <stop offset="0" stop-color="var(--up)"/><stop offset="1" stop-color="var(--up)" stop-opacity="0"/>
-        </linearGradient></defs>
-        <line class="grid" x1="0" y1="${midY}" x2="${W}" y2="${midY}"/>
-        ${area}
-        <path d="${line}" fill="none" stroke="var(--up)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" vector-effect="non-scaling-stroke"/>
-      </svg>`;
+      <div class="chart-wrap">
+        <svg class="chart" data-chart="${chartId}" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none">
+          <defs><linearGradient id="lg-${uid}" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0" stop-color="var(--up)"/><stop offset="1" stop-color="var(--up)" stop-opacity="0"/>
+          </linearGradient></defs>
+          ${ax.grid}
+          ${area}
+          <path d="${line}" fill="none" stroke="var(--up)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" vector-effect="non-scaling-stroke"/>
+        </svg>
+        <div class="chart-y">${ax.yLabels}</div>
+      </div>
+      <div class="chart-x">${ax.xLabels}</div>`;
     // Normalise points to {ts, latency_ms} for the hover reader.
     const hover = {
       id: chartId,
       cfg: {
         points: points.map((p) => ({ ts: p.ts, latency_ms: p.latency_ms })),
         vb,
+        base,
         top,
         series: [{ key: "latency_ms", label: "Response", color: "var(--up)", unit: "ms" }],
       },
@@ -290,10 +353,11 @@
       return { html: `<div class="speed-empty">Waiting for the first speed test…</div>`, hover: null };
     }
     const allVals = series.flatMap((p) => [p.down, p.up]);
-    const top = Math.max(...allVals) * 1.15 || 1;
+    const scale = computeScale(allVals);
+    const { base, top } = scale;
     const n = series.length;
     const x = (i) => padX + (i / Math.max(1, n - 1)) * (W - 2 * padX);
-    const y = (v) => padT + (1 - v / top) * (H - padT - padB);
+    const y = (v) => padT + (1 - (v - base) / (top - base)) * (H - padT - padB);
 
     const pathFor = (key) => {
       let d = "";
@@ -307,29 +371,34 @@
     const baseline = H - padB;
     const dlArea = `${dlLine}L${x(n - 1).toFixed(1)} ${baseline} L${x(0).toFixed(1)} ${baseline} Z`;
     const ulArea = `${ulLine}L${x(n - 1).toFixed(1)} ${baseline} L${x(0).toFixed(1)} ${baseline} Z`;
-    const midY = y(top / 2).toFixed(1);
+    const ax = buildAxes(scale, vb, series);
 
     const html = `
-      <svg class="speed-chart" data-chart="${chartId}" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none">
-        <defs>
-          <linearGradient id="dl-${uid}" x1="0" y1="0" x2="0" y2="1">
-            <stop offset="0" stop-color="var(--dl)" stop-opacity="0.35"/><stop offset="1" stop-color="var(--dl)" stop-opacity="0"/>
-          </linearGradient>
-          <linearGradient id="ul-${uid}" x1="0" y1="0" x2="0" y2="1">
-            <stop offset="0" stop-color="var(--ul)" stop-opacity="0.30"/><stop offset="1" stop-color="var(--ul)" stop-opacity="0"/>
-          </linearGradient>
-        </defs>
-        <line class="grid" x1="0" y1="${midY}" x2="${W}" y2="${midY}"/>
-        <path d="${ulArea}" fill="url(#ul-${uid})"/>
-        <path d="${dlArea}" fill="url(#dl-${uid})"/>
-        <path d="${ulLine}" fill="none" stroke="var(--ul)" stroke-width="2" stroke-linejoin="round" vector-effect="non-scaling-stroke"/>
-        <path d="${dlLine}" fill="none" stroke="var(--dl)" stroke-width="2" stroke-linejoin="round" vector-effect="non-scaling-stroke"/>
-      </svg>`;
+      <div class="chart-wrap">
+        <svg class="speed-chart" data-chart="${chartId}" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none">
+          <defs>
+            <linearGradient id="dl-${uid}" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0" stop-color="var(--dl)" stop-opacity="0.35"/><stop offset="1" stop-color="var(--dl)" stop-opacity="0"/>
+            </linearGradient>
+            <linearGradient id="ul-${uid}" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0" stop-color="var(--ul)" stop-opacity="0.30"/><stop offset="1" stop-color="var(--ul)" stop-opacity="0"/>
+            </linearGradient>
+          </defs>
+          ${ax.grid}
+          <path d="${ulArea}" fill="url(#ul-${uid})"/>
+          <path d="${dlArea}" fill="url(#dl-${uid})"/>
+          <path d="${ulLine}" fill="none" stroke="var(--ul)" stroke-width="2" stroke-linejoin="round" vector-effect="non-scaling-stroke"/>
+          <path d="${dlLine}" fill="none" stroke="var(--dl)" stroke-width="2" stroke-linejoin="round" vector-effect="non-scaling-stroke"/>
+        </svg>
+        <div class="chart-y">${ax.yLabels}</div>
+      </div>
+      <div class="chart-x">${ax.xLabels}</div>`;
     const hover = {
       id: chartId,
       cfg: {
         points: series.map((p) => ({ ts: p.ts, down: p.down, up: p.up })),
         vb,
+        base,
         top,
         series: [
           { key: "down", label: "Download", color: "var(--dl)", unit: "Mbps" },
