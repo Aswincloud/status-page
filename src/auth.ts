@@ -39,6 +39,16 @@ function timingSafeEqual(a: string, b: string): boolean {
   return diff === 0;
 }
 
+// OWNER_EMAIL is a comma-separated allow-list (one or more addresses). An email
+// is "owner" if it's in the list (case-insensitive).
+function isOwner(env: Env, email: string): boolean {
+  const allow = (env.OWNER_EMAIL ?? "")
+    .split(",")
+    .map((e) => e.trim().toLowerCase())
+    .filter(Boolean);
+  return allow.includes(email.toLowerCase());
+}
+
 export async function makeSession(env: Env, email: string): Promise<string> {
   const payload = b64urlStr(JSON.stringify({ email, exp: Date.now() + SESSION_TTL_MS }));
   const key = await hmacKey(env.SESSION_SECRET!);
@@ -59,7 +69,7 @@ export async function getSession(req: Request, env: Env): Promise<string | null>
   try {
     const data = JSON.parse(fromB64url(payload)) as { email: string; exp: number };
     if (data.exp < Date.now()) return null;
-    if (data.email.toLowerCase() !== env.OWNER_EMAIL.toLowerCase()) return null;
+    if (!isOwner(env, data.email)) return null;
     return data.email;
   } catch {
     return null;
@@ -144,7 +154,7 @@ export async function handleCallback(req: Request, env: Env): Promise<Response> 
   const email = (claims.email ?? "").toLowerCase();
   const verified = claims.email_verified === true || claims.email_verified === "true";
   if (!email || !verified) return backHome("unverified");
-  if (email !== env.OWNER_EMAIL.toLowerCase()) {
+  if (!isOwner(env, email)) {
     // Wrong Google account — send them home with a banner + a way to retry,
     // and clear any stale session cookie so they're not silently half-logged-in.
     return backHome("denied", true);
