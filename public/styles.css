@@ -113,6 +113,38 @@ body {
 #unlock { color: var(--text-faint); }
 #unlock.active { color: var(--up); border-color: rgba(48, 209, 88, 0.4); background: var(--up-soft); }
 
+/* ---- sign-in result banner (failed OAuth callback redirects here) ---- */
+.auth-banner {
+  display: flex; align-items: center; gap: 12px;
+  margin: 0 0 16px;
+  padding: 11px 14px;
+  border-radius: var(--radius);
+  border: 1px solid rgba(255, 214, 10, 0.35);
+  background: linear-gradient(180deg, var(--warn-soft), transparent), var(--card);
+  color: var(--text);
+  font-size: 13.5px;
+}
+.auth-banner-msg { flex: 1; }
+.auth-banner-btn {
+  flex: none;
+  font-size: 12.5px; font-weight: 600;
+  padding: 6px 12px; border-radius: 8px;
+  border: 1px solid var(--border); background: var(--card-2); color: var(--text);
+  cursor: pointer; white-space: nowrap;
+  transition: background 0.15s, transform 0.1s;
+}
+.auth-banner-btn:hover { background: var(--card); transform: translateY(-1px); }
+.auth-banner-x {
+  flex: none;
+  width: 26px; height: 26px; line-height: 1;
+  display: inline-grid; place-items: center;
+  font-size: 19px;
+  border: none; border-radius: 7px;
+  background: transparent; color: var(--text-dim);
+  cursor: pointer;
+}
+.auth-banner-x:hover { color: var(--text); background: var(--card-2); }
+
 /* ---- on-demand Test now button (owner only) ---- */
 .speed-actions { display: flex; align-items: center; gap: 14px; flex: none; }
 .test-now {

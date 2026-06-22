@@ -88,6 +88,55 @@
     }
   });
 
+  // ---- sign-in result banner ----
+  // The OAuth callback can't render UI, so on any failure it redirects to
+  // /?auth=<code>. Turn that into a dismissible banner here (with a retry that
+  // re-opens Google's account chooser), then scrub the param from the URL.
+  function showAuthBanner() {
+    const code = new URLSearchParams(location.search).get("auth");
+    if (!code) return;
+    const messages = {
+      denied: "That Google account isn't authorized. Sign in with the owner account.",
+      unverified: "That Google account's email isn't verified.",
+      state: "Sign-in expired or was interrupted. Please try again.",
+      exchange: "Couldn't complete sign-in with Google. Please try again.",
+      config: "Sign-in isn't configured on the server.",
+    };
+    const msg = messages[code] || "Sign-in didn't complete.";
+    const retryable = code !== "config";
+
+    const bar = document.createElement("div");
+    bar.className = "auth-banner";
+    bar.setAttribute("role", "alert");
+    const text = document.createElement("span");
+    text.className = "auth-banner-msg";
+    text.textContent = msg;
+    bar.appendChild(text);
+    if (retryable) {
+      const retry = document.createElement("button");
+      retry.type = "button";
+      retry.className = "auth-banner-btn";
+      retry.textContent = "Try another account";
+      retry.addEventListener("click", () => { window.location.href = "/api/auth/login"; });
+      bar.appendChild(retry);
+    }
+    const close = document.createElement("button");
+    close.type = "button";
+    close.className = "auth-banner-x";
+    close.setAttribute("aria-label", "Dismiss");
+    close.textContent = "×";
+    close.addEventListener("click", () => bar.remove());
+    bar.appendChild(close);
+
+    const wrap = $(".wrap") || document.body;
+    wrap.insertBefore(bar, wrap.firstChild);
+
+    // Scrub ?auth= so a refresh doesn't re-show it.
+    const url = new URL(location.href);
+    url.searchParams.delete("auth");
+    history.replaceState(null, "", url.pathname + url.search + url.hash);
+  }
+
   // ---- on-demand speed test ----
   let testing = false;
   let testPollTimer = null;
@@ -702,6 +751,7 @@
     }
   }
 
+  showAuthBanner(); // surface any ?auth=<code> from a failed sign-in callback
   refreshCanTest(); // decide whether to show the Test button (home / session / token)
   tick();
   setInterval(tick, REFRESH_MS);

@@ -98,17 +98,22 @@ export async function handleCallback(req: Request, env: Env): Promise<Response> 
   const state = url.searchParams.get("state");
   const stateCookie = (req.headers.get("cookie") ?? "").match(/(?:^|;\s*)oauth_state=([^;]+)/)?.[1];
 
-  const fail = (msg: string) =>
-    new Response(`Sign-in failed: ${msg}`, {
-      status: 400,
-      headers: { "Set-Cookie": secureCookie(STATE_COOKIE, "", 0) },
-    });
+  // Never strand the user on a dead-end error page: bounce back to the status
+  // page with an ?auth=<code> flag the front-end turns into a dismissible banner
+  // (with a "Try another account" action). Always clear the one-shot state cookie;
+  // optionally clear any session cookie too (wrong-account case).
+  const backHome = (code: string, clearSess = false) => {
+    const headers = new Headers({ Location: `${origin}/?auth=${code}` });
+    headers.append("Set-Cookie", secureCookie(STATE_COOKIE, "", 0));
+    if (clearSess) headers.append("Set-Cookie", secureCookie(COOKIE, "", 0));
+    return new Response(null, { status: 302, headers });
+  };
 
   if (!code || !state || !stateCookie || !timingSafeEqual(state, stateCookie)) {
-    return fail("invalid state");
+    return backHome("state");
   }
   if (!env.GOOGLE_CLIENT_ID || !env.GOOGLE_CLIENT_SECRET || !env.OWNER_EMAIL || !env.SESSION_SECRET) {
-    return fail("SSO not configured");
+    return backHome("config");
   }
 
   // Exchange the code for tokens.
@@ -123,9 +128,9 @@ export async function handleCallback(req: Request, env: Env): Promise<Response> 
       grant_type: "authorization_code",
     }),
   });
-  if (!tokenRes.ok) return fail("token exchange failed");
+  if (!tokenRes.ok) return backHome("exchange");
   const tok = (await tokenRes.json()) as { id_token?: string };
-  if (!tok.id_token) return fail("no id_token");
+  if (!tok.id_token) return backHome("exchange");
 
   // The id_token is a JWT; the email/verified claims sit in the payload. Google
   // just minted it over TLS in direct response to our authenticated exchange, so
@@ -134,16 +139,15 @@ export async function handleCallback(req: Request, env: Env): Promise<Response> 
   try {
     claims = JSON.parse(fromB64url(tok.id_token.split(".")[1]));
   } catch {
-    return fail("bad id_token");
+    return backHome("exchange");
   }
   const email = (claims.email ?? "").toLowerCase();
   const verified = claims.email_verified === true || claims.email_verified === "true";
-  if (!email || !verified) return fail("email not verified");
+  if (!email || !verified) return backHome("unverified");
   if (email !== env.OWNER_EMAIL.toLowerCase()) {
-    return new Response("Not authorized for this account.", {
-      status: 403,
-      headers: { "Set-Cookie": secureCookie(STATE_COOKIE, "", 0) },
-    });
+    // Wrong Google account — send them home with a banner + a way to retry,
+    // and clear any stale session cookie so they're not silently half-logged-in.
+    return backHome("denied", true);
   }
 
   const session = await makeSession(env, email);

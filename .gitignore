@@ -7,3 +7,4 @@ prober/.env
 .DS_Store
 .ingest_token.secret
 speedagent/.env
+.control_token.secret
