@@ -37,7 +37,16 @@
       canTest = false;
     }
     reflectUnlock();
+    // The Test button lives in the speed panel, which renderSpeed() only rebuilds
+    // on a status tick. If our owner state just changed (e.g. just signed in), the
+    // panel was likely already rendered without the button — re-render it now so the
+    // button appears (or disappears) immediately instead of after the next 20s tick.
+    if (canTest !== prevCanTest) {
+      prevCanTest = canTest;
+      if (lastSpeedData) renderSpeed(lastSpeedData);
+    }
   }
+  let prevCanTest = false;
 
   function reflectUnlock() {
     const btn = $("#signin");
@@ -105,6 +114,7 @@
   let testing = false;
   let testPollTimer = null;
   let lastSpeedTs = null; // ts of the latest speed sample seen (to detect a fresh one)
+  let lastSpeedData = null; // last speed payload, so we can re-render when canTest flips
 
   async function requestSpeedTest() {
     if (!canTest || testing) return;
@@ -445,6 +455,7 @@
   // ---- internet speed panel ----
   let speedUid = 0;
   function renderSpeed(speed) {
+    lastSpeedData = speed; // remember so refreshCanTest() can re-render on sign-in
     const section = $("#speed");
     if (!speed || !speed.latest) {
       section.hidden = true;
