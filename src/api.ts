@@ -32,15 +32,6 @@ function agentLink(env: Env): DurableObjectStub {
   return env.AGENT_LINK.get(env.AGENT_LINK.idFromName("home"));
 }
 
-// Cloudflare gives us the real client IP here (the page is proxied through CF;
-// cf-connecting-ip is set by the edge and not client-spoofable in production).
-// Loopback/empty are treated as "no IP" so home-matching can never pass on them.
-function clientIp(req: Request): string {
-  const ip = req.headers.get("cf-connecting-ip") ?? "";
-  if (ip === "::1" || ip === "127.0.0.1" || ip === "localhost") return "";
-  return ip;
-}
-
 const json = (data: unknown, init?: ResponseInit) =>
   new Response(JSON.stringify(data), {
     ...init,
@@ -144,10 +135,6 @@ export async function handleSpeedtest(req: Request, env: Env): Promise<Response>
     server: typeof body.server === "string" ? body.server : null,
     isp: typeof body.isp === "string" ? body.isp : null,
   });
-  // The agent runs AT home, so its source IP is the home outbound IP. Record it
-  // (auto-updates as the ISP rotates it) so we can recognise visitors from home.
-  const ip = clientIp(req);
-  if (ip) await setControl(env.DB, "home_ip", ip);
   return json({ ok: true });
 }
 
@@ -158,22 +145,19 @@ function bearer(req: Request): string {
   return auth.startsWith("Bearer ") ? auth.slice(7) : "";
 }
 
-// Decide whether a request is allowed to trigger an action. Three ways in:
-//   1. signed Google session cookie (owner)            — strong
-//   2. visitor IP == the home agent's IP               — convenience (at home)
-//   3. legacy CONTROL_TOKEN bearer                      — manual fallback
+// Decide whether a request is allowed to trigger an action. Two ways in:
+//   1. signed Google session cookie (owner)  — the normal path (sign-in button)
+//   2. legacy CONTROL_TOKEN bearer           — server-side fallback (curl/cron)
 async function authorize(
   req: Request,
   env: Env,
-): Promise<{ ok: boolean; via: "session" | "home" | "token" | null }> {
+): Promise<{ ok: boolean; via: "session" | "token" | null }> {
   if (await getSession(req, env)) return { ok: true, via: "session" };
-  const homeIp = await getControl(env.DB, "home_ip");
-  if (homeIp && clientIp(req) && clientIp(req) === homeIp) return { ok: true, via: "home" };
   if (env.CONTROL_TOKEN && bearer(req) === env.CONTROL_TOKEN) return { ok: true, via: "token" };
   return { ok: false, via: null };
 }
 
-// GET /api/can-test — does THIS visitor get the Test button? (uncached, per-IP)
+// GET /api/can-test — is THIS visitor signed in as owner? (uncached, per-session)
 export async function handleCanTest(req: Request, env: Env): Promise<Response> {
   const { ok, via } = await authorize(req, env);
   const linked = await agentLink(env)
@@ -225,9 +209,6 @@ export async function handleAgentWs(req: Request, env: Env): Promise<Response> {
   if (!env.INGEST_TOKEN || token !== env.INGEST_TOKEN) {
     return new Response("unauthorized", { status: 401 });
   }
-  // Remember the agent's source IP as "home" the moment it links.
-  const ip = clientIp(req);
-  if (ip) await setControl(env.DB, "home_ip", ip);
   return agentLink(env).fetch("https://do/connect", req);
 }
 

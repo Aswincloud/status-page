@@ -108,10 +108,21 @@ body {
 [data-theme="dark"] .icon-sun { display: none; }
 [data-theme="light"] .icon-moon { display: none; }
 
-.head-controls { display: flex; gap: 8px; }
-/* unlock key icon: dim by default, green when unlocked */
-#unlock { color: var(--text-faint); }
-#unlock.active { color: var(--up); border-color: rgba(48, 209, 88, 0.4); background: var(--up-soft); }
+.head-controls { display: flex; align-items: center; gap: 8px; }
+/* owner sign-in button: text pill; tints green when signed in */
+.signin-btn {
+  height: 38px; padding: 0 14px;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  background: var(--card);
+  color: var(--text-dim);
+  font-size: 13px; font-weight: 600;
+  cursor: pointer; white-space: nowrap;
+  transition: background 0.15s, color 0.15s, border-color 0.15s, transform 0.1s;
+}
+.signin-btn:hover { color: var(--text); transform: translateY(-1px); }
+.signin-btn:active { transform: translateY(0); }
+.signin-btn.active { color: var(--up); border-color: rgba(48, 209, 88, 0.4); background: var(--up-soft); }
 
 /* ---- sign-in result banner (failed OAuth callback redirects here) ---- */
 .auth-banner {

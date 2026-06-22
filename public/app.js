@@ -18,23 +18,19 @@
     localStorage.setItem("theme", next);
   });
 
-  // ---- owner controls (gates the on-demand "Test now" button) ----
-  // A visitor may trigger a test if EITHER: signed in with Google as the owner,
-  // OR browsing from the home network (their IP matches the agent's), OR they
-  // hold the legacy control token. The page itself stays fully public.
-  let canTest = false; // does this visitor get the button?
-  let testVia = null; // "session" | "home" | "token"
+  // ---- owner sign-in (gates the on-demand "Test now" button) ----
+  // The owner signs in with Google; that session is the only thing that unlocks
+  // the Test button in the UI. (A CONTROL_TOKEN bearer still works for server-side
+  // curl/cron, but the page itself is sign-in only.) The page stays fully public.
+  let canTest = false; // is this visitor signed in as owner?
   let agentOnline = false; // is the home agent's WebSocket linked?
   let ssoConfigured = false;
-  let controlToken = localStorage.getItem("ctl") || null;
 
   async function refreshCanTest() {
     try {
-      const headers = controlToken ? { authorization: `Bearer ${controlToken}` } : {};
-      const res = await fetch("/api/can-test", { headers, cache: "no-store" });
+      const res = await fetch("/api/can-test", { cache: "no-store" });
       const j = await res.json();
       canTest = !!j.canTest;
-      testVia = j.via || null;
       agentOnline = !!j.agentOnline;
       ssoConfigured = !!j.ssoConfigured;
     } catch {
@@ -44,48 +40,16 @@
   }
 
   function reflectUnlock() {
-    const btn = $("#unlock");
+    const btn = $("#signin");
+    if (!btn) return;
+    btn.textContent = canTest ? "Sign out" : "Sign in";
     btn.classList.toggle("active", canTest);
-    btn.title = canTest
-      ? `Owner controls — enabled via ${testVia || "session"} (click for options)`
-      : "Owner controls";
+    btn.title = canTest ? "Signed in as owner — click to sign out" : "Sign in with Google (owner)";
   }
 
-  // The key icon opens a tiny menu: sign in / out, or paste a token.
-  $("#unlock").addEventListener("click", async () => {
-    if (canTest) {
-      const what = testVia === "session" ? "Sign out?" : "Lock controls?";
-      if (confirm(what)) {
-        if (testVia === "session") {
-          window.location.href = "/api/auth/logout";
-          return;
-        }
-        controlToken = null;
-        localStorage.removeItem("ctl");
-        await refreshCanTest();
-        tick();
-      }
-      return;
-    }
-    // Not yet enabled — offer the best available method.
-    if (ssoConfigured && confirm("Sign in with Google to enable owner controls?\n(Cancel to enter a control token instead.)")) {
-      window.location.href = "/api/auth/login";
-      return;
-    }
-    const token = prompt("Enter owner control token:");
-    if (!token) return;
-    const ok = await fetch("/api/control-check", {
-      method: "POST",
-      headers: { authorization: `Bearer ${token.trim()}` },
-    }).then((r) => r.ok).catch(() => false);
-    if (ok) {
-      controlToken = token.trim();
-      localStorage.setItem("ctl", controlToken);
-      await refreshCanTest();
-      tick();
-    } else {
-      alert("Invalid token.");
-    }
+  // The sign-in button: straight to Google when signed out, logout when signed in.
+  $("#signin").addEventListener("click", () => {
+    window.location.href = canTest ? "/api/auth/logout" : "/api/auth/login";
   });
 
   // ---- sign-in result banner ----
@@ -147,8 +111,8 @@
     const baselineTs = lastSpeedTs;
     let res;
     try {
-      const headers = controlToken ? { authorization: `Bearer ${controlToken}` } : {};
-      res = await fetch("/api/request-test", { method: "POST", headers });
+      // Session cookie carries authorization (sign-in only); no header needed.
+      res = await fetch("/api/request-test", { method: "POST" });
     } catch {
       setTestBtn("error", "Network error");
       return;
