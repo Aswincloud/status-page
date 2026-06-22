@@ -18,6 +18,140 @@
     localStorage.setItem("theme", next);
   });
 
+  // ---- owner unlock (gates the on-demand "Test now" control) ----
+  // The control token lives only in this browser's localStorage; it's verified
+  // server-side and never shipped in the page. Visitors never see owner controls.
+  let controlToken = localStorage.getItem("ctl") || null;
+  const isUnlocked = () => !!controlToken;
+
+  function reflectUnlock() {
+    const btn = $("#unlock");
+    btn.classList.toggle("active", isUnlocked());
+    btn.title = isUnlocked() ? "Owner controls (unlocked) — click to lock" : "Owner controls";
+  }
+
+  async function verifyToken(token) {
+    try {
+      const res = await fetch("/api/control-check", {
+        method: "POST",
+        headers: { authorization: `Bearer ${token}` },
+      });
+      return res.ok;
+    } catch {
+      return false;
+    }
+  }
+
+  $("#unlock").addEventListener("click", async () => {
+    if (isUnlocked()) {
+      // toggle back to locked
+      controlToken = null;
+      localStorage.removeItem("ctl");
+      reflectUnlock();
+      tick();
+      return;
+    }
+    const token = prompt("Enter owner control token:");
+    if (!token) return;
+    if (await verifyToken(token.trim())) {
+      controlToken = token.trim();
+      localStorage.setItem("ctl", controlToken);
+      reflectUnlock();
+      tick();
+    } else {
+      alert("Invalid token.");
+    }
+  });
+
+  // If a token was remembered, re-verify it quietly on load (revokes cleanly if
+  // the secret changed server-side).
+  if (controlToken) {
+    verifyToken(controlToken).then((ok) => {
+      if (!ok) {
+        controlToken = null;
+        localStorage.removeItem("ctl");
+      }
+      reflectUnlock();
+    });
+  }
+  reflectUnlock();
+
+  // ---- on-demand speed test ----
+  let testing = false;
+  let testPollTimer = null;
+  let lastSpeedTs = null; // ts of the latest speed sample seen (to detect a fresh one)
+
+  async function requestSpeedTest() {
+    if (!isUnlocked() || testing) return;
+    const baselineTs = lastSpeedTs;
+    let res;
+    try {
+      res = await fetch("/api/request-test", {
+        method: "POST",
+        headers: { authorization: `Bearer ${controlToken}` },
+      });
+    } catch {
+      setTestBtn("error", "Network error");
+      return;
+    }
+    if (res.status === 429) {
+      const j = await res.json().catch(() => ({}));
+      const secs = j.retryInSec || 120;
+      setTestBtn("cooldown", `Wait ${Math.ceil(secs / 60)}m`);
+      setTimeout(() => setTestBtn("idle"), 4000);
+      return;
+    }
+    if (res.status === 401) {
+      // token no longer valid
+      controlToken = null;
+      localStorage.removeItem("ctl");
+      reflectUnlock();
+      tick();
+      return;
+    }
+    if (!res.ok) {
+      setTestBtn("error", "Failed");
+      return;
+    }
+    // queued — wait for a fresh sample (the agent polls ~15s, test ~30s).
+    testing = true;
+    setTestBtn("testing");
+    let waited = 0;
+    clearInterval(testPollTimer);
+    testPollTimer = setInterval(async () => {
+      waited += 5;
+      await tick();
+      if (lastSpeedTs && lastSpeedTs !== baselineTs) {
+        testing = false;
+        clearInterval(testPollTimer);
+        setTestBtn("done");
+        setTimeout(() => setTestBtn("idle"), 3000);
+      } else if (waited > 120) {
+        // give up waiting after 2 min
+        testing = false;
+        clearInterval(testPollTimer);
+        setTestBtn("timeout", "Taking longer than usual");
+        setTimeout(() => setTestBtn("idle"), 5000);
+      }
+    }, 5000);
+  }
+
+  function setTestBtn(state, msg) {
+    const btn = $("#test-now");
+    if (!btn) return;
+    btn.classList.toggle("busy", state === "testing");
+    btn.disabled = state === "testing" || state === "cooldown";
+    const labels = {
+      idle: "Test now",
+      testing: "Testing…",
+      done: "✓ Updated",
+      cooldown: msg || "On cooldown",
+      timeout: msg || "Still running…",
+      error: msg || "Error",
+    };
+    btn.textContent = labels[state] || "Test now";
+  }
+
   // ---- helpers ----
   const pct = (v) => (v == null ? "—" : `${v.toFixed(v >= 99.95 || v === 0 ? (v === 100 ? 0 : 2) : 2)}%`);
 
@@ -297,6 +431,9 @@
     const s = speed;
     const uid = "sp" + speedUid++;
 
+    // Track the freshest sample timestamp (how the on-demand poll detects a new test).
+    lastSpeedTs = s.latest.ts;
+
     // dual-area throughput chart (download teal, upload violet)
     const chart = throughputChart(s.series, uid);
     const fmt = (v) => (v == null ? "—" : v >= 100 ? Math.round(v) : v.toFixed(1));
@@ -304,15 +441,21 @@
     const pingTxt = s.latest.ping != null ? `${s.latest.ping.toFixed(1)} ms` : "—";
 
     const serverLabel = [s.isp, s.server].filter(Boolean).join(" · ") || "speed test";
+    const testBtn = isUnlocked()
+      ? `<button id="test-now" class="test-now" type="button">${testing ? "Testing…" : "Test now"}</button>`
+      : "";
     card.innerHTML = `
       <div class="speed-top">
         <div>
           <div class="speed-title">Internet speed</div>
           <div class="speed-sub">${escapeHtml(serverLabel)}</div>
         </div>
-        <div class="speed-ping">
-          <div class="stat-label">Ping</div>
-          <div class="stat-val">${pingTxt}</div>
+        <div class="speed-actions">
+          ${testBtn}
+          <div class="speed-ping">
+            <div class="stat-label">Ping</div>
+            <div class="stat-val">${pingTxt}</div>
+          </div>
         </div>
       </div>
 
@@ -341,6 +484,13 @@
     // hover-to-read on the throughput chart
     if (chart.hover) {
       attachChartHover(card.querySelector(`[data-chart="${chart.hover.id}"]`), chart.hover.cfg);
+    }
+
+    // wire the owner-only Test now button (re-created on each render)
+    const tn = $("#test-now", card);
+    if (tn) {
+      if (testing) setTestBtn("testing");
+      tn.addEventListener("click", requestSpeedTest);
     }
   }
 

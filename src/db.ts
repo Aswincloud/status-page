@@ -4,6 +4,7 @@ export interface Env {
   DB: D1Database;
   ASSETS: Fetcher;
   INGEST_TOKEN?: string;
+  CONTROL_TOKEN?: string; // owner-only actions (e.g. on-demand speed test)
   // Alert channels (optional — alerts.ts no-ops for a channel when its vars are unset):
   TELEGRAM_BOT_TOKEN?: string;
   TELEGRAM_CHAT_ID?: string;
@@ -147,4 +148,18 @@ export async function insertSpeedtest(
 
 export async function pruneOldSpeedtests(db: D1Database, olderThan: number): Promise<void> {
   await db.prepare(`DELETE FROM speedtests WHERE ts < ?`).bind(olderThan).run();
+}
+
+// ---- control key/value ----
+
+export async function getControl(db: D1Database, key: string): Promise<string | null> {
+  const row = await db.prepare(`SELECT v FROM control WHERE k = ?`).bind(key).first<{ v: string }>();
+  return row?.v ?? null;
+}
+
+export async function setControl(db: D1Database, key: string, value: string): Promise<void> {
+  await db
+    .prepare(`INSERT INTO control (k, v) VALUES (?, ?) ON CONFLICT(k) DO UPDATE SET v = excluded.v`)
+    .bind(key, value)
+    .run();
 }

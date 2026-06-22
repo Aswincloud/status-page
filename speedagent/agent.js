@@ -12,7 +12,10 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const TOKEN = process.env.INGEST_TOKEN;
 const INGEST_URL = process.env.INGEST_URL || "https://status.aswincloud.com/api/speedtest";
 const INTERVAL = (Number(process.env.INTERVAL_SECONDS) || 900) * 1000; // default 15 min
+const POLL_MS = (Number(process.env.POLL_SECONDS) || 15) * 1000; // on-demand check cadence
 const SPEEDTEST = process.env.SPEEDTEST_BIN || "speedtest";
+// Derive the pending-test URL from the ingest URL (same origin, sibling path).
+const PENDING_URL = process.env.PENDING_URL || INGEST_URL.replace(/\/speedtest$/, "/pending-test");
 
 if (!TOKEN) {
   console.error("FATAL: INGEST_TOKEN env var is required.");
@@ -55,18 +58,40 @@ async function push(sample) {
   if (!res.ok) throw new Error(`ingest ${res.status}: ${await res.text()}`);
 }
 
-async function cycle() {
+// A single in-flight guard so scheduled + on-demand tests never overlap (a test
+// saturates the line; running two at once would skew both).
+let running = false;
+
+async function cycle(reason) {
+  if (running) return;
+  running = true;
   const ts = new Date().toISOString();
   try {
     const s = await runSpeedtest();
     await push(s);
-    console.log(`[${ts}] ok — ↓${s.download_mbps} ↑${s.upload_mbps} Mbps · ping ${s.ping_ms}ms · ${s.isp || ""}`);
+    console.log(`[${ts}] ok (${reason}) — ↓${s.download_mbps} ↑${s.upload_mbps} Mbps · ping ${s.ping_ms}ms · ${s.isp || ""}`);
   } catch (err) {
     // A failed test or push is non-fatal — try again next interval.
-    console.error(`[${ts}] failed: ${err.message}`);
+    console.error(`[${ts}] failed (${reason}): ${err.message}`);
+  } finally {
+    running = false;
   }
 }
 
-console.log(`speed agent up · every ${INTERVAL / 1000}s · → ${INGEST_URL}`);
-cycle();
-setInterval(cycle, INTERVAL);
+// Poll the Worker for an owner-requested on-demand test.
+async function poll() {
+  if (running) return;
+  try {
+    const res = await fetch(PENDING_URL, { headers: { authorization: `Bearer ${TOKEN}` } });
+    if (!res.ok) return;
+    const j = await res.json();
+    if (j.pending) await cycle("on-demand");
+  } catch {
+    // transient — ignore, try again next poll
+  }
+}
+
+console.log(`speed agent up · scheduled every ${INTERVAL / 1000}s · on-demand poll ${POLL_MS / 1000}s · → ${INGEST_URL}`);
+cycle("startup");
+setInterval(() => cycle("scheduled"), INTERVAL);
+setInterval(poll, POLL_MS);

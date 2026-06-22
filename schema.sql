@@ -40,6 +40,12 @@ CREATE TABLE IF NOT EXISTS speedtests (
 );
 CREATE INDEX IF NOT EXISTS idx_speedtests_ts ON speedtests(ts);
 
+-- Small key/value store for control state (e.g. on-demand speed-test requests).
+CREATE TABLE IF NOT EXISTS control (
+  k TEXT PRIMARY KEY,
+  v TEXT
+);
+
 -- Seed the starter monitor so the page renders something on first paint, before
 -- the prober's first heartbeat arrives. The prober will upsert this same row.
 INSERT OR IGNORE INTO monitors (id, name, type, target, created_at)

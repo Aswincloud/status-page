@@ -6,12 +6,14 @@ import {
   IncomingSpeedtest,
   MonitorRow,
   STALE_MS,
+  getControl,
   insertCheck,
   insertSpeedtest,
   latestCheck,
   listMonitors,
   openIncident,
   resolveIncident,
+  setControl,
   startIncident,
   upsertMonitor,
 } from "./db";
@@ -128,6 +130,49 @@ export async function handleSpeedtest(req: Request, env: Env): Promise<Response>
     isp: typeof body.isp === "string" ? body.isp : null,
   });
   return json({ ok: true });
+}
+
+const COOLDOWN_MS = 2 * 60 * 1000; // min gap between on-demand tests
+
+function bearer(req: Request): string {
+  const auth = req.headers.get("authorization") ?? "";
+  return auth.startsWith("Bearer ") ? auth.slice(7) : "";
+}
+
+// POST /api/control-check — verify an owner control token (for unlocking the UI).
+export async function handleControlCheck(req: Request, env: Env): Promise<Response> {
+  const ok = !!env.CONTROL_TOKEN && bearer(req) === env.CONTROL_TOKEN;
+  return json({ ok }, { status: ok ? 200 : 401 });
+}
+
+// POST /api/request-test — owner asks for an on-demand speed test (CONTROL_TOKEN).
+// Enforces a server-side cooldown so it can't hammer the home connection.
+export async function handleRequestTest(req: Request, env: Env): Promise<Response> {
+  if (!env.CONTROL_TOKEN || bearer(req) !== env.CONTROL_TOKEN) {
+    return json({ error: "unauthorized" }, { status: 401 });
+  }
+  const now = Date.now();
+  const lastReq = Number((await getControl(env.DB, "test_requested_at")) ?? 0);
+  if (now - lastReq < COOLDOWN_MS) {
+    const retryInSec = Math.ceil((COOLDOWN_MS - (now - lastReq)) / 1000);
+    return json({ error: "cooldown", retryInSec }, { status: 429 });
+  }
+  await setControl(env.DB, "test_requested_at", String(now));
+  return json({ ok: true, requestedAt: now });
+}
+
+// GET /api/pending-test — the home agent polls this (INGEST_TOKEN). Pending if a
+// request exists that's newer than the most recent stored speed sample.
+export async function handlePendingTest(req: Request, env: Env): Promise<Response> {
+  if (!env.INGEST_TOKEN || bearer(req) !== env.INGEST_TOKEN) {
+    return json({ error: "unauthorized" }, { status: 401 });
+  }
+  const requestedAt = Number((await getControl(env.DB, "test_requested_at")) ?? 0);
+  const last = await env.DB.prepare(`SELECT MAX(ts) AS t FROM speedtests`).first<{ t: number | null }>();
+  const lastSample = last?.t ?? 0;
+  // 5-min freshness window so a stale flag doesn't trigger a test after downtime.
+  const pending = requestedAt > lastSample && Date.now() - requestedAt < 5 * 60 * 1000;
+  return json({ pending, requestedAt });
 }
 
 // GET /api/status — public snapshot the page polls. Cached ~15s at the edge.

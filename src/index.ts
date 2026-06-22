@@ -11,7 +11,15 @@ import {
   pruneOldChecks,
   pruneOldSpeedtests,
 } from "./db";
-import { applyCheck, handleIngest, handleSpeedtest, handleStatus } from "./api";
+import {
+  applyCheck,
+  handleControlCheck,
+  handleIngest,
+  handlePendingTest,
+  handleRequestTest,
+  handleSpeedtest,
+  handleStatus,
+} from "./api";
 
 export default {
   async fetch(req: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
@@ -22,6 +30,15 @@ export default {
     }
     if (url.pathname === "/api/speedtest" && req.method === "POST") {
       return handleSpeedtest(req, env);
+    }
+    if (url.pathname === "/api/control-check" && req.method === "POST") {
+      return handleControlCheck(req, env);
+    }
+    if (url.pathname === "/api/request-test" && req.method === "POST") {
+      return handleRequestTest(req, env);
+    }
+    if (url.pathname === "/api/pending-test" && req.method === "GET") {
+      return handlePendingTest(req, env);
     }
     if (url.pathname === "/api/status" && req.method === "GET") {
       return handleStatus(req, env, ctx);
