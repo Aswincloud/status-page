@@ -313,6 +313,29 @@ body {
   padding: 5px 9px; border-radius: 6px;
   transform: translate(-50%, -120%);
   white-space: nowrap; box-shadow: var(--shadow);
+  line-height: 1.45;
+}
+.tip .tip-time { opacity: 0.65; font-size: 11px; margin-bottom: 1px; font-variant-numeric: tabular-nums; }
+.tip .tip-key { opacity: 0.8; }
+.tip .tip-key i {
+  display: inline-block; width: 8px; height: 8px; border-radius: 2px;
+  margin-right: 5px; vertical-align: baseline;
+}
+.tip b { font-variant-numeric: tabular-nums; }
+
+/* chart hover cursor: vertical guide + marker dots (HTML overlays in screen space,
+   so the dot stays round despite the stretched SVG) */
+.chart-guide {
+  position: fixed; z-index: 48; pointer-events: none;
+  width: 1px; background: var(--text-faint);
+  opacity: 0.5; transform: translateX(-0.5px);
+}
+.chart-dot {
+  position: fixed; z-index: 49; pointer-events: none;
+  width: 9px; height: 9px; border-radius: 50%;
+  border: 2px solid var(--bg);
+  transform: translate(-50%, -50%);
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.15);
 }
 
 /* ---- skeletons ---- */

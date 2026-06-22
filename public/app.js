@@ -60,7 +60,83 @@
     tip.style.top = y + "px";
     tip.hidden = false;
   }
+  function showTipHTML(html, x, y) {
+    tip.innerHTML = html;
+    tip.style.left = x + "px";
+    tip.style.top = y + "px";
+    tip.hidden = false;
+  }
   const hideTip = () => (tip.hidden = true);
+
+  // ---- chart cursor: a vertical guide line + marker dot(s), reused across charts.
+  // The charts use preserveAspectRatio="none" (x/y stretched), so markers are HTML
+  // overlays positioned in screen space — that keeps the dot perfectly round. ----
+  function fixedEl(cls) {
+    const d = document.createElement("div");
+    d.className = cls;
+    d.hidden = true;
+    document.body.appendChild(d);
+    return d;
+  }
+  const guideEl = fixedEl("chart-guide");
+  const dotEls = [fixedEl("chart-dot"), fixedEl("chart-dot")];
+  function hideChartCursor() {
+    guideEl.hidden = true;
+    dotEls.forEach((d) => (d.hidden = true));
+    hideTip();
+  }
+
+  // Attach hover-to-read to one chart SVG.
+  // cfg = { points, vb:{W,H,padT,padB,padX}, top, series:[{key,label,color,unit}] }
+  function attachChartHover(svg, cfg) {
+    if (!svg || !cfg || !cfg.points || cfg.points.length === 0 || cfg.top == null) return;
+    const { points, vb, top, series } = cfg;
+    const n = points.length;
+    svg.style.cursor = "crosshair";
+
+    svg.addEventListener("mousemove", (e) => {
+      const rect = svg.getBoundingClientRect();
+      if (rect.width === 0) return;
+      let f = (e.clientX - rect.left) / rect.width;
+      f = Math.max(0, Math.min(1, f));
+      const i = Math.round(f * (n - 1));
+      const p = points[i];
+      const px = rect.left + (n === 1 ? 0 : i / (n - 1)) * rect.width;
+
+      guideEl.style.left = px + "px";
+      guideEl.style.top = rect.top + "px";
+      guideEl.style.height = rect.height + "px";
+      guideEl.hidden = false;
+
+      const rows = [];
+      let topY = null;
+      series.forEach((s, si) => {
+        const v = p[s.key];
+        const dot = dotEls[si];
+        if (v == null) {
+          if (dot) dot.hidden = true;
+          rows.push(`<span class="tip-key" style="color:var(--text-faint,#999)">${s.label}: down</span>`);
+          return;
+        }
+        const vbY = vb.padT + (1 - v / top) * (vb.H - vb.padT - vb.padB);
+        const py = rect.top + (vbY / vb.H) * rect.height;
+        if (dot) {
+          dot.style.left = px + "px";
+          dot.style.top = py + "px";
+          dot.style.background = s.color;
+          dot.hidden = false;
+        }
+        if (topY == null || py < topY) topY = py;
+        const val = v >= 100 ? Math.round(v) : v.toFixed(1);
+        rows.push(`<span class="tip-key"><i style="background:${s.color}"></i>${s.label}</span> <b>${val}${s.unit ? " " + s.unit : ""}</b>`);
+      });
+      for (let k = series.length; k < dotEls.length; k++) dotEls[k].hidden = true;
+
+      const time = new Date(p.ts).toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" });
+      showTipHTML(`<div class="tip-time">${time}</div>${rows.join("<br>")}`, px, topY != null ? topY : rect.top);
+    });
+    svg.addEventListener("mouseleave", hideChartCursor);
+  }
 
   // ---- overall banner ----
   function renderOverall(data) {
@@ -94,17 +170,14 @@
   // Larger than a sparkline: y-axis max label, gridline, gradient area, line
   // that breaks on downtime. viewBox units; CSS sizes it.
   function latencyChart(points, uid) {
-    const W = 600,
-      H = 96,
-      padT = 8,
-      padB = 6,
-      padX = 4;
+    const vb = { W: 600, H: 96, padT: 8, padB: 6, padX: 4 };
+    const { W, H, padT, padB, padX } = vb;
+    const chartId = "lat-" + uid;
     const lat = points.map((p) => p.latency_ms).filter((v) => v != null);
     if (lat.length === 0) {
-      return `<svg class="chart" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none"></svg>`;
+      return { html: `<svg class="chart" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none"></svg>`, hover: null };
     }
     const max = Math.max(...lat);
-    const min = Math.min(...lat);
     const top = max * 1.15 || 1; // headroom; baseline at 0 for honest scale
     const n = points.length;
     const x = (i) => padX + (i / Math.max(1, n - 1)) * (W - 2 * padX);
@@ -126,8 +199,8 @@
       : "";
     const midY = y(top / 2).toFixed(1);
 
-    return `
-      <svg class="chart" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none">
+    const html = `
+      <svg class="chart" data-chart="${chartId}" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none">
         <defs><linearGradient id="lg-${uid}" x1="0" y1="0" x2="0" y2="1">
           <stop offset="0" stop-color="var(--up)"/><stop offset="1" stop-color="var(--up)" stop-opacity="0"/>
         </linearGradient></defs>
@@ -135,6 +208,17 @@
         ${area}
         <path d="${line}" fill="none" stroke="var(--up)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" vector-effect="non-scaling-stroke"/>
       </svg>`;
+    // Normalise points to {ts, latency_ms} for the hover reader.
+    const hover = {
+      id: chartId,
+      cfg: {
+        points: points.map((p) => ({ ts: p.ts, latency_ms: p.latency_ms })),
+        vb,
+        top,
+        series: [{ key: "latency_ms", label: "Response", color: "var(--up)", unit: "ms" }],
+      },
+    };
+    return { html, hover };
   }
 
   // ---- internet speed panel ----
@@ -153,6 +237,7 @@
     // dual-area throughput chart (download teal, upload violet)
     const chart = throughputChart(s.series, uid);
     const fmt = (v) => (v == null ? "—" : v >= 100 ? Math.round(v) : v.toFixed(1));
+    // (hover attached after innerHTML below)
     const pingTxt = s.latest.ping != null ? `${s.latest.ping.toFixed(1)} ms` : "—";
 
     const serverLabel = [s.isp, s.server].filter(Boolean).join(" · ") || "speed test";
@@ -181,7 +266,7 @@
         </div>
       </div>
 
-      ${chart}
+      ${chart.html}
 
       <div class="speed-legend">
         <span class="key"><span class="swatch dl"></span>Download</span>
@@ -189,17 +274,20 @@
         <span class="when">last ${s.windowHours}h · tested ${relTime(s.latest.ts)}</span>
       </div>
     `;
+
+    // hover-to-read on the throughput chart
+    if (chart.hover) {
+      attachChartHover(card.querySelector(`[data-chart="${chart.hover.id}"]`), chart.hover.cfg);
+    }
   }
 
   // dual stacked-area chart: download + upload Mbps over the window
   function throughputChart(series, uid) {
-    const W = 600,
-      H = 120,
-      padT = 8,
-      padB = 6,
-      padX = 4;
+    const vb = { W: 600, H: 120, padT: 8, padB: 6, padX: 4 };
+    const { W, H, padT, padB, padX } = vb;
+    const chartId = "spd-" + uid;
     if (!series || series.length === 0) {
-      return `<div class="speed-empty">Waiting for the first speed test…</div>`;
+      return { html: `<div class="speed-empty">Waiting for the first speed test…</div>`, hover: null };
     }
     const allVals = series.flatMap((p) => [p.down, p.up]);
     const top = Math.max(...allVals) * 1.15 || 1;
@@ -221,8 +309,8 @@
     const ulArea = `${ulLine}L${x(n - 1).toFixed(1)} ${baseline} L${x(0).toFixed(1)} ${baseline} Z`;
     const midY = y(top / 2).toFixed(1);
 
-    return `
-      <svg class="speed-chart" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none">
+    const html = `
+      <svg class="speed-chart" data-chart="${chartId}" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none">
         <defs>
           <linearGradient id="dl-${uid}" x1="0" y1="0" x2="0" y2="1">
             <stop offset="0" stop-color="var(--dl)" stop-opacity="0.35"/><stop offset="1" stop-color="var(--dl)" stop-opacity="0"/>
@@ -237,6 +325,19 @@
         <path d="${ulLine}" fill="none" stroke="var(--ul)" stroke-width="2" stroke-linejoin="round" vector-effect="non-scaling-stroke"/>
         <path d="${dlLine}" fill="none" stroke="var(--dl)" stroke-width="2" stroke-linejoin="round" vector-effect="non-scaling-stroke"/>
       </svg>`;
+    const hover = {
+      id: chartId,
+      cfg: {
+        points: series.map((p) => ({ ts: p.ts, down: p.down, up: p.up })),
+        vb,
+        top,
+        series: [
+          { key: "down", label: "Download", color: "var(--dl)", unit: "Mbps" },
+          { key: "up", label: "Upload", color: "var(--ul)", unit: "Mbps" },
+        ],
+      },
+    };
+    return { html, hover };
   }
 
   // ---- monitor card ----
@@ -267,6 +368,8 @@
     const lastLatency =
       m.last_latency_ms != null ? `<b>${Math.round(m.last_latency_ms)} ms</b>` : "—";
 
+    const latChart = latencyChart(m.latency, m.id);
+
     card.innerHTML = `
       <div class="card-top">
         <div class="card-id">
@@ -292,7 +395,7 @@
         <span class="chart-title">Response time</span>
         <span class="chart-now">${lastLatency} · <span style="color:var(--text-faint)">checked ${relTime(m.last_checked)}</span></span>
       </div>
-      ${latencyChart(m.latency, m.id)}
+      ${latChart.html}
     `;
 
     // wire tooltips on day cells
@@ -303,6 +406,11 @@
       });
       cell.addEventListener("mouseleave", hideTip);
     });
+
+    // hover-to-read on the response-time chart
+    if (latChart.hover) {
+      attachChartHover(card.querySelector(`[data-chart="${latChart.hover.id}"]`), latChart.hover.cfg);
+    }
 
     return card;
   }
