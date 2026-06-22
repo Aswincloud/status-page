@@ -18,6 +18,7 @@ import {
   upsertMonitor,
 } from "./db";
 import { notify } from "./alerts";
+import { getSession } from "./auth";
 import {
   dayBuckets,
   latencySeries,
@@ -25,6 +26,20 @@ import {
   speedSummary,
   uptimePct,
 } from "./stats";
+
+// The single Durable Object instance that links to the home agent.
+function agentLink(env: Env): DurableObjectStub {
+  return env.AGENT_LINK.get(env.AGENT_LINK.idFromName("home"));
+}
+
+// Cloudflare gives us the real client IP here (the page is proxied through CF;
+// cf-connecting-ip is set by the edge and not client-spoofable in production).
+// Loopback/empty are treated as "no IP" so home-matching can never pass on them.
+function clientIp(req: Request): string {
+  const ip = req.headers.get("cf-connecting-ip") ?? "";
+  if (ip === "::1" || ip === "127.0.0.1" || ip === "localhost") return "";
+  return ip;
+}
 
 const json = (data: unknown, init?: ResponseInit) =>
   new Response(JSON.stringify(data), {
@@ -129,6 +144,10 @@ export async function handleSpeedtest(req: Request, env: Env): Promise<Response>
     server: typeof body.server === "string" ? body.server : null,
     isp: typeof body.isp === "string" ? body.isp : null,
   });
+  // The agent runs AT home, so its source IP is the home outbound IP. Record it
+  // (auto-updates as the ISP rotates it) so we can recognise visitors from home.
+  const ip = clientIp(req);
+  if (ip) await setControl(env.DB, "home_ip", ip);
   return json({ ok: true });
 }
 
@@ -139,40 +158,77 @@ function bearer(req: Request): string {
   return auth.startsWith("Bearer ") ? auth.slice(7) : "";
 }
 
-// POST /api/control-check — verify an owner control token (for unlocking the UI).
+// Decide whether a request is allowed to trigger an action. Three ways in:
+//   1. signed Google session cookie (owner)            — strong
+//   2. visitor IP == the home agent's IP               — convenience (at home)
+//   3. legacy CONTROL_TOKEN bearer                      — manual fallback
+async function authorize(
+  req: Request,
+  env: Env,
+): Promise<{ ok: boolean; via: "session" | "home" | "token" | null }> {
+  if (await getSession(req, env)) return { ok: true, via: "session" };
+  const homeIp = await getControl(env.DB, "home_ip");
+  if (homeIp && clientIp(req) && clientIp(req) === homeIp) return { ok: true, via: "home" };
+  if (env.CONTROL_TOKEN && bearer(req) === env.CONTROL_TOKEN) return { ok: true, via: "token" };
+  return { ok: false, via: null };
+}
+
+// GET /api/can-test — does THIS visitor get the Test button? (uncached, per-IP)
+export async function handleCanTest(req: Request, env: Env): Promise<Response> {
+  const { ok, via } = await authorize(req, env);
+  const linked = await agentLink(env)
+    .fetch("https://do/connected")
+    .then((r) => r.json() as Promise<{ connected: boolean }>)
+    .catch(() => ({ connected: false }));
+  const ssoConfigured = !!(env.GOOGLE_CLIENT_ID && env.OWNER_EMAIL && env.SESSION_SECRET);
+  return json(
+    { canTest: ok, via, agentOnline: linked.connected, ssoConfigured },
+    { headers: { "cache-control": "no-store" } },
+  );
+}
+
+// POST /api/control-check — verify a legacy owner control token (manual unlock).
 export async function handleControlCheck(req: Request, env: Env): Promise<Response> {
   const ok = !!env.CONTROL_TOKEN && bearer(req) === env.CONTROL_TOKEN;
   return json({ ok }, { status: ok ? 200 : 401 });
 }
 
-// POST /api/request-test — owner asks for an on-demand speed test (CONTROL_TOKEN).
-// Enforces a server-side cooldown so it can't hammer the home connection.
+// POST /api/request-test — trigger an on-demand speed test. Authorized via session,
+// home-IP, or token; rate-limited; pushed to the agent over its WebSocket (no poll).
 export async function handleRequestTest(req: Request, env: Env): Promise<Response> {
-  if (!env.CONTROL_TOKEN || bearer(req) !== env.CONTROL_TOKEN) {
-    return json({ error: "unauthorized" }, { status: 401 });
-  }
+  const { ok } = await authorize(req, env);
+  if (!ok) return json({ error: "unauthorized" }, { status: 401 });
+
   const now = Date.now();
   const lastReq = Number((await getControl(env.DB, "test_requested_at")) ?? 0);
   if (now - lastReq < COOLDOWN_MS) {
     const retryInSec = Math.ceil((COOLDOWN_MS - (now - lastReq)) / 1000);
     return json({ error: "cooldown", retryInSec }, { status: 429 });
   }
+
+  // Push the command down the agent's live socket.
+  const pushed = await agentLink(env)
+    .fetch("https://do/push", { method: "POST", body: JSON.stringify({ cmd: "run", at: now }) })
+    .then((r) => r.ok)
+    .catch(() => false);
+  if (!pushed) return json({ error: "agent_offline" }, { status: 503 });
+
   await setControl(env.DB, "test_requested_at", String(now));
   return json({ ok: true, requestedAt: now });
 }
 
-// GET /api/pending-test — the home agent polls this (INGEST_TOKEN). Pending if a
-// request exists that's newer than the most recent stored speed sample.
-export async function handlePendingTest(req: Request, env: Env): Promise<Response> {
-  if (!env.INGEST_TOKEN || bearer(req) !== env.INGEST_TOKEN) {
-    return json({ error: "unauthorized" }, { status: 401 });
+// GET /api/agent-ws — the home agent opens its persistent link here (INGEST_TOKEN
+// via query, since WebSocket clients can't set Authorization headers everywhere).
+export async function handleAgentWs(req: Request, env: Env): Promise<Response> {
+  const url = new URL(req.url);
+  const token = url.searchParams.get("token") ?? bearer(req);
+  if (!env.INGEST_TOKEN || token !== env.INGEST_TOKEN) {
+    return new Response("unauthorized", { status: 401 });
   }
-  const requestedAt = Number((await getControl(env.DB, "test_requested_at")) ?? 0);
-  const last = await env.DB.prepare(`SELECT MAX(ts) AS t FROM speedtests`).first<{ t: number | null }>();
-  const lastSample = last?.t ?? 0;
-  // 5-min freshness window so a stale flag doesn't trigger a test after downtime.
-  const pending = requestedAt > lastSample && Date.now() - requestedAt < 5 * 60 * 1000;
-  return json({ pending, requestedAt });
+  // Remember the agent's source IP as "home" the moment it links.
+  const ip = clientIp(req);
+  if (ip) await setControl(env.DB, "home_ip", ip);
+  return agentLink(env).fetch("https://do/connect", req);
 }
 
 // GET /api/status — public snapshot the page polls. Cached ~15s at the edge.

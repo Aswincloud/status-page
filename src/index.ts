@@ -13,37 +13,37 @@ import {
 } from "./db";
 import {
   applyCheck,
+  handleAgentWs,
+  handleCanTest,
   handleControlCheck,
   handleIngest,
-  handlePendingTest,
   handleRequestTest,
   handleSpeedtest,
   handleStatus,
 } from "./api";
+import { handleCallback, handleLogin, handleLogout } from "./auth";
+
+export { AgentLink } from "./agent-link";
 
 export default {
   async fetch(req: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
     const url = new URL(req.url);
+    const p = url.pathname;
 
-    if (url.pathname === "/api/ingest" && req.method === "POST") {
-      return handleIngest(req, env);
-    }
-    if (url.pathname === "/api/speedtest" && req.method === "POST") {
-      return handleSpeedtest(req, env);
-    }
-    if (url.pathname === "/api/control-check" && req.method === "POST") {
-      return handleControlCheck(req, env);
-    }
-    if (url.pathname === "/api/request-test" && req.method === "POST") {
-      return handleRequestTest(req, env);
-    }
-    if (url.pathname === "/api/pending-test" && req.method === "GET") {
-      return handlePendingTest(req, env);
-    }
-    if (url.pathname === "/api/status" && req.method === "GET") {
-      return handleStatus(req, env, ctx);
-    }
-    if (url.pathname === "/api/health") {
+    if (p === "/api/ingest" && req.method === "POST") return handleIngest(req, env);
+    if (p === "/api/speedtest" && req.method === "POST") return handleSpeedtest(req, env);
+    if (p === "/api/agent-ws") return handleAgentWs(req, env);
+    if (p === "/api/can-test" && req.method === "GET") return handleCanTest(req, env);
+    if (p === "/api/control-check" && req.method === "POST") return handleControlCheck(req, env);
+    if (p === "/api/request-test" && req.method === "POST") return handleRequestTest(req, env);
+    if (p === "/api/status" && req.method === "GET") return handleStatus(req, env, ctx);
+
+    // Google OIDC
+    if (p === "/api/auth/login") return handleLogin(req, env);
+    if (p === "/api/auth/callback") return handleCallback(req, env);
+    if (p === "/api/auth/logout") return handleLogout(req);
+
+    if (p === "/api/health") {
       return new Response("ok", { headers: { "content-type": "text/plain" } });
     }
 

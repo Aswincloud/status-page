@@ -12,10 +12,11 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const TOKEN = process.env.INGEST_TOKEN;
 const INGEST_URL = process.env.INGEST_URL || "https://status.aswincloud.com/api/speedtest";
 const INTERVAL = (Number(process.env.INTERVAL_SECONDS) || 900) * 1000; // default 15 min
-const POLL_MS = (Number(process.env.POLL_SECONDS) || 15) * 1000; // on-demand check cadence
 const SPEEDTEST = process.env.SPEEDTEST_BIN || "speedtest";
-// Derive the pending-test URL from the ingest URL (same origin, sibling path).
-const PENDING_URL = process.env.PENDING_URL || INGEST_URL.replace(/\/speedtest$/, "/pending-test");
+// Persistent control link: derive the wss:// agent-ws URL from the ingest URL.
+const WS_URL =
+  process.env.WS_URL ||
+  INGEST_URL.replace(/^http/, "ws").replace(/\/speedtest$/, `/agent-ws?token=${encodeURIComponent(TOKEN || "")}`);
 
 if (!TOKEN) {
   console.error("FATAL: INGEST_TOKEN env var is required.");
@@ -78,20 +79,44 @@ async function cycle(reason) {
   }
 }
 
-// Poll the Worker for an owner-requested on-demand test.
-async function poll() {
-  if (running) return;
-  try {
-    const res = await fetch(PENDING_URL, { headers: { authorization: `Bearer ${TOKEN}` } });
-    if (!res.ok) return;
-    const j = await res.json();
-    if (j.pending) await cycle("on-demand");
-  } catch {
-    // transient — ignore, try again next poll
-  }
+// Persistent outbound WebSocket to the Worker (held open by a Durable Object).
+// The Worker pushes {cmd:'run'} when someone clicks "Test now" — instant, no poll.
+// Auto-reconnects with capped backoff; a heartbeat ping keeps the link healthy.
+let ws = null;
+let backoff = 1000;
+
+function connect() {
+  ws = new WebSocket(WS_URL);
+
+  ws.addEventListener("open", () => {
+    backoff = 1000;
+    console.log(`[${new Date().toISOString()}] control link connected`);
+  });
+
+  ws.addEventListener("message", (ev) => {
+    let msg;
+    try { msg = JSON.parse(typeof ev.data === "string" ? ev.data : ""); } catch { return; }
+    if (msg && msg.cmd === "run") {
+      console.log(`[${new Date().toISOString()}] on-demand test requested`);
+      cycle("on-demand");
+    }
+  });
+
+  const reconnect = () => {
+    if (ws) { try { ws.close(); } catch { /* ignore */ } ws = null; }
+    setTimeout(connect, backoff);
+    backoff = Math.min(backoff * 2, 30_000);
+  };
+  ws.addEventListener("close", reconnect);
+  ws.addEventListener("error", () => { try { ws.close(); } catch { /* ignore */ } });
 }
 
-console.log(`speed agent up · scheduled every ${INTERVAL / 1000}s · on-demand poll ${POLL_MS / 1000}s · → ${INGEST_URL}`);
+// Keep the link warm (and detect dead sockets) with a periodic ping frame.
+setInterval(() => {
+  try { if (ws && ws.readyState === 1) ws.send(JSON.stringify({ cmd: "ping" })); } catch { /* ignore */ }
+}, 45_000);
+
+console.log(`speed agent up · scheduled every ${INTERVAL / 1000}s · on-demand via WebSocket · → ${INGEST_URL}`);
 cycle("startup");
 setInterval(() => cycle("scheduled"), INTERVAL);
-setInterval(poll, POLL_MS);
+connect();

@@ -3,8 +3,14 @@
 export interface Env {
   DB: D1Database;
   ASSETS: Fetcher;
+  AGENT_LINK: DurableObjectNamespace; // holds the home agent's WebSocket
   INGEST_TOKEN?: string;
-  CONTROL_TOKEN?: string; // owner-only actions (e.g. on-demand speed test)
+  CONTROL_TOKEN?: string; // owner-only actions (legacy manual unlock)
+  // Google OIDC + session:
+  GOOGLE_CLIENT_ID?: string;
+  GOOGLE_CLIENT_SECRET?: string;
+  SESSION_SECRET?: string; // HMAC key for signing the session cookie
+  OWNER_EMAIL?: string; // only this Google account may trigger actions
   // Alert channels (optional — alerts.ts no-ops for a channel when its vars are unset):
   TELEGRAM_BOT_TOKEN?: string;
   TELEGRAM_CHAT_ID?: string;

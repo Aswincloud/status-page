@@ -18,63 +18,75 @@
     localStorage.setItem("theme", next);
   });
 
-  // ---- owner unlock (gates the on-demand "Test now" control) ----
-  // The control token lives only in this browser's localStorage; it's verified
-  // server-side and never shipped in the page. Visitors never see owner controls.
+  // ---- owner controls (gates the on-demand "Test now" button) ----
+  // A visitor may trigger a test if EITHER: signed in with Google as the owner,
+  // OR browsing from the home network (their IP matches the agent's), OR they
+  // hold the legacy control token. The page itself stays fully public.
+  let canTest = false; // does this visitor get the button?
+  let testVia = null; // "session" | "home" | "token"
+  let agentOnline = false; // is the home agent's WebSocket linked?
+  let ssoConfigured = false;
   let controlToken = localStorage.getItem("ctl") || null;
-  const isUnlocked = () => !!controlToken;
+
+  async function refreshCanTest() {
+    try {
+      const headers = controlToken ? { authorization: `Bearer ${controlToken}` } : {};
+      const res = await fetch("/api/can-test", { headers, cache: "no-store" });
+      const j = await res.json();
+      canTest = !!j.canTest;
+      testVia = j.via || null;
+      agentOnline = !!j.agentOnline;
+      ssoConfigured = !!j.ssoConfigured;
+    } catch {
+      canTest = false;
+    }
+    reflectUnlock();
+  }
 
   function reflectUnlock() {
     const btn = $("#unlock");
-    btn.classList.toggle("active", isUnlocked());
-    btn.title = isUnlocked() ? "Owner controls (unlocked) — click to lock" : "Owner controls";
+    btn.classList.toggle("active", canTest);
+    btn.title = canTest
+      ? `Owner controls — enabled via ${testVia || "session"} (click for options)`
+      : "Owner controls";
   }
 
-  async function verifyToken(token) {
-    try {
-      const res = await fetch("/api/control-check", {
-        method: "POST",
-        headers: { authorization: `Bearer ${token}` },
-      });
-      return res.ok;
-    } catch {
-      return false;
-    }
-  }
-
+  // The key icon opens a tiny menu: sign in / out, or paste a token.
   $("#unlock").addEventListener("click", async () => {
-    if (isUnlocked()) {
-      // toggle back to locked
-      controlToken = null;
-      localStorage.removeItem("ctl");
-      reflectUnlock();
-      tick();
+    if (canTest) {
+      const what = testVia === "session" ? "Sign out?" : "Lock controls?";
+      if (confirm(what)) {
+        if (testVia === "session") {
+          window.location.href = "/api/auth/logout";
+          return;
+        }
+        controlToken = null;
+        localStorage.removeItem("ctl");
+        await refreshCanTest();
+        tick();
+      }
+      return;
+    }
+    // Not yet enabled — offer the best available method.
+    if (ssoConfigured && confirm("Sign in with Google to enable owner controls?\n(Cancel to enter a control token instead.)")) {
+      window.location.href = "/api/auth/login";
       return;
     }
     const token = prompt("Enter owner control token:");
     if (!token) return;
-    if (await verifyToken(token.trim())) {
+    const ok = await fetch("/api/control-check", {
+      method: "POST",
+      headers: { authorization: `Bearer ${token.trim()}` },
+    }).then((r) => r.ok).catch(() => false);
+    if (ok) {
       controlToken = token.trim();
       localStorage.setItem("ctl", controlToken);
-      reflectUnlock();
+      await refreshCanTest();
       tick();
     } else {
       alert("Invalid token.");
     }
   });
-
-  // If a token was remembered, re-verify it quietly on load (revokes cleanly if
-  // the secret changed server-side).
-  if (controlToken) {
-    verifyToken(controlToken).then((ok) => {
-      if (!ok) {
-        controlToken = null;
-        localStorage.removeItem("ctl");
-      }
-      reflectUnlock();
-    });
-  }
-  reflectUnlock();
 
   // ---- on-demand speed test ----
   let testing = false;
@@ -82,38 +94,38 @@
   let lastSpeedTs = null; // ts of the latest speed sample seen (to detect a fresh one)
 
   async function requestSpeedTest() {
-    if (!isUnlocked() || testing) return;
+    if (!canTest || testing) return;
     const baselineTs = lastSpeedTs;
     let res;
     try {
-      res = await fetch("/api/request-test", {
-        method: "POST",
-        headers: { authorization: `Bearer ${controlToken}` },
-      });
+      const headers = controlToken ? { authorization: `Bearer ${controlToken}` } : {};
+      res = await fetch("/api/request-test", { method: "POST", headers });
     } catch {
       setTestBtn("error", "Network error");
       return;
     }
     if (res.status === 429) {
       const j = await res.json().catch(() => ({}));
-      const secs = j.retryInSec || 120;
-      setTestBtn("cooldown", `Wait ${Math.ceil(secs / 60)}m`);
+      setTestBtn("cooldown", `Wait ${Math.ceil((j.retryInSec || 120) / 60)}m`);
+      setTimeout(() => setTestBtn("idle"), 4000);
+      return;
+    }
+    if (res.status === 503) {
+      setTestBtn("error", "Agent offline");
       setTimeout(() => setTestBtn("idle"), 4000);
       return;
     }
     if (res.status === 401) {
-      // token no longer valid
-      controlToken = null;
-      localStorage.removeItem("ctl");
-      reflectUnlock();
+      await refreshCanTest();
       tick();
       return;
     }
     if (!res.ok) {
       setTestBtn("error", "Failed");
+      setTimeout(() => setTestBtn("idle"), 4000);
       return;
     }
-    // queued — wait for a fresh sample (the agent polls ~15s, test ~30s).
+    // queued — pushed to the agent over WS; wait for a fresh sample (~30s test).
     testing = true;
     setTestBtn("testing");
     let waited = 0;
@@ -126,11 +138,10 @@
         clearInterval(testPollTimer);
         setTestBtn("done");
         setTimeout(() => setTestBtn("idle"), 3000);
-      } else if (waited > 120) {
-        // give up waiting after 2 min
+      } else if (waited > 90) {
         testing = false;
         clearInterval(testPollTimer);
-        setTestBtn("timeout", "Taking longer than usual");
+        setTestBtn("timeout", "Still running…");
         setTimeout(() => setTestBtn("idle"), 5000);
       }
     }, 5000);
@@ -441,8 +452,8 @@
     const pingTxt = s.latest.ping != null ? `${s.latest.ping.toFixed(1)} ms` : "—";
 
     const serverLabel = [s.isp, s.server].filter(Boolean).join(" · ") || "speed test";
-    const testBtn = isUnlocked()
-      ? `<button id="test-now" class="test-now" type="button">${testing ? "Testing…" : "Test now"}</button>`
+    const testBtn = canTest
+      ? `<button id="test-now" class="test-now" type="button"${agentOnline ? "" : " disabled title='Home agent offline'"}>${testing ? "Testing…" : "Test now"}</button>`
       : "";
     card.innerHTML = `
       <div class="speed-top">
@@ -691,10 +702,15 @@
     }
   }
 
+  refreshCanTest(); // decide whether to show the Test button (home / session / token)
   tick();
   setInterval(tick, REFRESH_MS);
+  setInterval(refreshCanTest, 60_000); // re-check (IP can change; session can expire)
   // refresh immediately when the tab regains focus
   document.addEventListener("visibilitychange", () => {
-    if (!document.hidden) tick();
+    if (!document.hidden) {
+      tick();
+      refreshCanTest();
+    }
   });
 })();

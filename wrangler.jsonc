@@ -36,6 +36,14 @@
     "crons": ["* * * * *"]
   },
 
+  // Durable Object holding the home speed-agent's persistent outbound WebSocket,
+  // so the Worker can push an on-demand "run test" instantly (no polling).
+  // SQLite-backed class → eligible on the Workers free plan.
+  "durable_objects": {
+    "bindings": [{ "name": "AGENT_LINK", "class_name": "AgentLink" }]
+  },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["AgentLink"] }],
+
   // Public custom domain. The aswincloud.com zone is in this account, so
   // Cloudflare provisions DNS + the TLS cert automatically on deploy.
   "routes": [
