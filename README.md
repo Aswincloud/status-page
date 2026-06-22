@@ -66,6 +66,8 @@ home and pushes heartbeats in.
 - **Internet speed graph** — real download/upload Mbps over time (current · avg · peak),
   measured **at home** by a separate speed agent so it reflects your actual connection
 - **Incident timeline** — ongoing + resolved, with durations
+- **On-demand "Test now"** — owner-only button triggers a speed test instantly over a
+  WebSocket push; unlocked by home-network IP, Google sign-in, or a token
 - **Alerts** on every down/recovery — **Email (Resend)**, **Slack**, and **Telegram**, each independent
 - **Dark / light theme** toggle · fully responsive · **zero frontend dependencies**
 - **Config-driven** — add a monitor by editing one JSON file; the page auto-discovers it
@@ -85,6 +87,8 @@ src/
   db.ts            D1 helpers + Env types + tunables (STALE_MS, RETENTION_MS)
   stats.ts         uptime %, 90-day buckets, latency series, incidents
   alerts.ts        email / Slack / Telegram — each activates only when its secrets exist
+  auth.ts          Google OIDC sign-in + signed session cookie (WebCrypto)
+  agent-link.ts    Durable Object holding the speed agent's WebSocket (on-demand push)
 public/            The status page — index.html · styles.css · app.js
 prober/            Docker prober — reachability checks (runs OUTSIDE home)
 speedagent/        Docker speed agent — Ookla speed tests (runs AT home)
@@ -156,6 +160,44 @@ docker compose logs -f          # expect: "ok — ↓329.8 ↑333.4 Mbps · ping
 
 Each test uses real bandwidth (~25 MB down + ~10 MB up). Change the cadence with
 `INTERVAL_SECONDS` in `docker-compose.yml`. The image auto-detects x86_64 / arm64.
+
+The agent also keeps a persistent **outbound WebSocket** to the Worker (held by a
+Durable Object) so an owner can trigger an **on-demand test** with no polling — see
+the next section.
+
+---
+
+## ⚡ On-demand "Test now" (owner only)
+
+An owner-only button in the speed panel triggers a test immediately: the Worker
+pushes `{cmd:'run'}` down the agent's WebSocket → the agent runs a test → the result
+appears in ~30s. A server-side **2-minute cooldown** prevents abuse. The page itself
+stays fully public; only the *action* is gated. A visitor may trigger it three ways:
+
+| Method | How it's recognised |
+|---|---|
+| **At home** | The agent runs at home, so the Worker records its source IP. A visitor whose IP matches sees the button automatically — no login. |
+| **Google sign-in** | The key icon → *Sign in with Google*. Only `OWNER_EMAIL` is accepted; sets a signed session cookie. |
+| **Control token** | Manual fallback — the key icon accepts a token (`CONTROL_TOKEN`). |
+
+Secrets (all Cloudflare Worker secrets, never in the repo):
+
+```bash
+npx wrangler secret put CONTROL_TOKEN     # manual-unlock fallback
+npx wrangler secret put SESSION_SECRET    # HMAC key for the session cookie
+npx wrangler secret put OWNER_EMAIL       # e.g. you@example.com
+npx wrangler secret put GOOGLE_CLIENT_ID
+npx wrangler secret put GOOGLE_CLIENT_SECRET
+```
+
+For Google sign-in, create an OAuth **Web application** client and set its redirect
+URI to `https://status.aswincloud.com/api/auth/callback` (scopes `openid email`).
+SSO degrades gracefully — if the Google secrets are unset, `/api/auth/login` returns
+503 and the home-IP / token paths still work.
+
+> Note on home detection: this works off the **agent's outbound IP**, not a DDNS
+> hostname — under CGNAT a home's inbound (port-forward/DDNS) and outbound IPs differ,
+> so matching the DDNS would fail from home.
 
 ---
 
