@@ -67,7 +67,7 @@ home and pushes heartbeats in.
   measured **at home** by a separate speed agent so it reflects your actual connection
 - **Incident timeline** — ongoing + resolved, with durations
 - **On-demand "Test now"** — owner-only button triggers a speed test instantly over a
-  WebSocket push; unlocked by home-network IP, Google sign-in, or a token
+  WebSocket push; gated by Google sign-in (`OWNER_EMAIL` allow-list)
 - **Alerts** on every down/recovery — **Email (Resend)**, **Slack**, and **Telegram**, each independent
 - **Dark / light theme** toggle · fully responsive · **zero frontend dependencies**
 - **Config-driven** — add a monitor by editing one JSON file; the page auto-discovers it
@@ -172,32 +172,28 @@ the next section.
 An owner-only button in the speed panel triggers a test immediately: the Worker
 pushes `{cmd:'run'}` down the agent's WebSocket → the agent runs a test → the result
 appears in ~30s. A server-side **2-minute cooldown** prevents abuse. The page itself
-stays fully public; only the *action* is gated. A visitor may trigger it three ways:
+stays fully public; only the *action* is gated — **by Google sign-in**:
 
-| Method | How it's recognised |
+| Method | How it works |
 |---|---|
-| **At home** | The agent runs at home, so the Worker records its source IP. A visitor whose IP matches sees the button automatically — no login. |
-| **Google sign-in** | The key icon → *Sign in with Google*. Only `OWNER_EMAIL` is accepted; sets a signed session cookie. |
-| **Control token** | Manual fallback — the key icon accepts a token (`CONTROL_TOKEN`). |
+| **Sign in** (UI) | The **Sign in** button (top-right) → *Sign in with Google*. Only an address in `OWNER_EMAIL` is accepted; sets a signed session cookie. The button then reads **Sign out**. |
+| **Control token** | Server-side fallback for curl/cron only — send `Authorization: Bearer <CONTROL_TOKEN>` to `/api/request-test`. Not exposed in the UI. |
 
 Secrets (all Cloudflare Worker secrets, never in the repo):
 
 ```bash
-npx wrangler secret put CONTROL_TOKEN     # manual-unlock fallback
-npx wrangler secret put SESSION_SECRET    # HMAC key for the session cookie
-npx wrangler secret put OWNER_EMAIL       # e.g. you@example.com
+npx wrangler secret put SESSION_SECRET     # HMAC key for the session cookie
+npx wrangler secret put OWNER_EMAIL        # comma-separated allow-list: a@x.com,b@gmail.com
 npx wrangler secret put GOOGLE_CLIENT_ID
 npx wrangler secret put GOOGLE_CLIENT_SECRET
+npx wrangler secret put CONTROL_TOKEN      # optional — server-side curl/cron fallback
 ```
 
 For Google sign-in, create an OAuth **Web application** client and set its redirect
 URI to `https://status.aswincloud.com/api/auth/callback` (scopes `openid email`).
-SSO degrades gracefully — if the Google secrets are unset, `/api/auth/login` returns
-503 and the home-IP / token paths still work.
-
-> Note on home detection: this works off the **agent's outbound IP**, not a DDNS
-> hostname — under CGNAT a home's inbound (port-forward/DDNS) and outbound IPs differ,
-> so matching the DDNS would fail from home.
+`OWNER_EMAIL` is a comma-separated allow-list, so more than one Google account can be
+an owner. A failed callback (wrong account, expired state) redirects back to the page
+with a dismissible banner + *Try another account* — never a dead-end error page.
 
 ---
 
