@@ -81,40 +81,84 @@ async function cycle(reason) {
 
 // Persistent outbound WebSocket to the Worker (held open by a Durable Object).
 // The Worker pushes {cmd:'run'} when someone clicks "Test now" — instant, no poll.
-// Auto-reconnects with capped backoff; a heartbeat ping keeps the link healthy.
+//
+// Reliability: a socket can go *half-open* — it still reads as OPEN locally while
+// the peer (or the DO, after a Worker deploy) is gone, so close/error never fire
+// and the link silently dies. To catch that we ping every HEARTBEAT_MS and expect
+// a pong; if none arrives for PONG_TIMEOUT_MS we treat the link as dead and force a
+// reconnect. Every lifecycle event is logged so a stuck link is visible in `docker
+// logs`. Reconnects use capped backoff and can't double-fire.
+const HEARTBEAT_MS = 30_000; // ping cadence
+const PONG_TIMEOUT_MS = 95_000; // no pong for ~3 intervals ⇒ link is dead
+
 let ws = null;
 let backoff = 1000;
+let lastPongAt = 0; // last time we heard anything back from the Worker
+let reconnectTimer = null; // ensures only one pending reconnect at a time
+
+function scheduleReconnect(why) {
+  if (reconnectTimer) return; // already queued
+  const delay = backoff;
+  console.error(`[${new Date().toISOString()}] control link down (${why}) — reconnecting in ${Math.round(delay / 1000)}s`);
+  reconnectTimer = setTimeout(() => { reconnectTimer = null; connect(); }, delay);
+  backoff = Math.min(backoff * 2, 30_000);
+}
 
 function connect() {
-  ws = new WebSocket(WS_URL);
+  console.log(`[${new Date().toISOString()}] control link connecting…`);
+  let sock;
+  try {
+    sock = new WebSocket(WS_URL);
+  } catch (e) {
+    scheduleReconnect(`connect threw: ${e.message}`);
+    return;
+  }
+  ws = sock;
 
-  ws.addEventListener("open", () => {
+  sock.addEventListener("open", () => {
     backoff = 1000;
+    lastPongAt = Date.now();
     console.log(`[${new Date().toISOString()}] control link connected`);
   });
 
-  ws.addEventListener("message", (ev) => {
+  sock.addEventListener("message", (ev) => {
     let msg;
     try { msg = JSON.parse(typeof ev.data === "string" ? ev.data : ""); } catch { return; }
-    if (msg && msg.cmd === "run") {
+    if (!msg) return;
+    lastPongAt = Date.now(); // any inbound frame proves the link is alive
+    if (msg.cmd === "run") {
       console.log(`[${new Date().toISOString()}] on-demand test requested`);
       cycle("on-demand");
     }
   });
 
-  const reconnect = () => {
-    if (ws) { try { ws.close(); } catch { /* ignore */ } ws = null; }
-    setTimeout(connect, backoff);
-    backoff = Math.min(backoff * 2, 30_000);
+  // close/error both mean "this socket is finished" — tear down once and requeue.
+  // The `ws !== sock` guard ignores late events from a socket we've already replaced.
+  const onDead = (why) => {
+    if (ws !== sock) return;
+    ws = null;
+    try { sock.close(); } catch { /* ignore */ }
+    scheduleReconnect(why);
   };
-  ws.addEventListener("close", reconnect);
-  ws.addEventListener("error", () => { try { ws.close(); } catch { /* ignore */ } });
+  sock.addEventListener("close", (ev) => onDead(`closed${ev && ev.code ? " " + ev.code : ""}`));
+  sock.addEventListener("error", () => onDead("error"));
 }
 
-// Keep the link warm (and detect dead sockets) with a periodic ping frame.
+// Heartbeat: ping to keep the link warm, AND force a reconnect if pongs stop —
+// this is what catches a half-open socket the OS still reports as connected.
 setInterval(() => {
-  try { if (ws && ws.readyState === 1) ws.send(JSON.stringify({ cmd: "ping" })); } catch { /* ignore */ }
-}, 45_000);
+  if (!ws || ws.readyState !== 1) return;
+  if (lastPongAt && Date.now() - lastPongAt > PONG_TIMEOUT_MS) {
+    const stale = Math.round((Date.now() - lastPongAt) / 1000);
+    console.error(`[${new Date().toISOString()}] no reply for ${stale}s — link is dead, forcing reconnect`);
+    const dead = ws;
+    ws = null; // so the close handler's guard skips (we reconnect explicitly)
+    try { dead.close(); } catch { /* ignore */ }
+    scheduleReconnect("heartbeat timeout");
+    return;
+  }
+  try { ws.send(JSON.stringify({ cmd: "ping" })); } catch { /* next tick / close handler covers it */ }
+}, HEARTBEAT_MS);
 
 console.log(`speed agent up · scheduled every ${INTERVAL / 1000}s · on-demand via WebSocket · → ${INGEST_URL}`);
 cycle("startup");

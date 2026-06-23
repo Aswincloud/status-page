@@ -40,7 +40,16 @@ export class AgentLink {
       server.addEventListener("error", () => {
         if (this.socket === server) this.socket = null;
       });
-      // The agent may send pings; we don't need to act on them.
+      // Reply to the agent's heartbeat so it can prove the link is alive end-to-end
+      // (an app-level pong; a half-open socket would never get this back, which is
+      // exactly how the agent detects a dead DO after a deploy and reconnects).
+      server.addEventListener("message", (ev) => {
+        let msg: { cmd?: string } | null = null;
+        try { msg = JSON.parse(typeof ev.data === "string" ? ev.data : ""); } catch { return; }
+        if (msg?.cmd === "ping") {
+          try { server.send(JSON.stringify({ cmd: "pong" })); } catch { /* ignore */ }
+        }
+      });
       return new Response(null, { status: 101, webSocket: client });
     }
 
