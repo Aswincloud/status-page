@@ -18,7 +18,7 @@ import {
   upsertMonitor,
 } from "./db";
 import { notify } from "./alerts";
-import { getSession } from "./auth";
+import { getSession, ssoConfigured } from "./auth";
 import {
   dayBuckets,
   latencySeries,
@@ -164,9 +164,8 @@ export async function handleCanTest(req: Request, env: Env): Promise<Response> {
     .fetch("https://do/connected")
     .then((r) => r.json() as Promise<{ connected: boolean }>)
     .catch(() => ({ connected: false }));
-  const ssoConfigured = !!(env.GOOGLE_CLIENT_ID && env.OWNER_EMAIL && env.SESSION_SECRET);
   return json(
-    { canTest: ok, via, agentOnline: linked.connected, ssoConfigured },
+    { canTest: ok, via, agentOnline: linked.connected, ssoConfigured: ssoConfigured(env) },
     { headers: { "cache-control": "no-store" } },
   );
 }

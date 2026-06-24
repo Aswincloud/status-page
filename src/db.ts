@@ -6,11 +6,17 @@ export interface Env {
   AGENT_LINK: DurableObjectNamespace; // holds the home agent's WebSocket
   INGEST_TOKEN?: string;
   CONTROL_TOKEN?: string; // owner-only actions (legacy manual unlock)
-  // Google OIDC + session:
+  // Sign-in via the central OAuth broker + session:
+  SESSION_SECRET?: string; // HMAC key for the session cookie (+ the sign-in nonce cookie)
+  OWNER_EMAIL?: string; // comma-separated allow-list of accounts that may sign in
+  // Central broker (auth.aswincloud.com) — set by the provision dashboard:
+  AUTH_BROKER_URL?: string; // e.g. https://auth.aswincloud.com
+  RELAY_SECRET?: string; // per-site shared secret; verifies the broker's relay token
+  ACCESS_MODE?: string; // "public" | "domain" | "owners" (default "owners")
+  ACCESS_DOMAINS?: string; // comma-separated, used when ACCESS_MODE=domain
+  // Legacy fields (kept so older config still typechecks; unused once on broker):
   GOOGLE_CLIENT_ID?: string;
   GOOGLE_CLIENT_SECRET?: string;
-  SESSION_SECRET?: string; // HMAC key for signing the session cookie
-  OWNER_EMAIL?: string; // comma-separated allow-list of Google accounts that may trigger actions
   // Alert channels (optional — alerts.ts no-ops for a channel when its vars are unset):
   TELEGRAM_BOT_TOKEN?: string;
   TELEGRAM_CHAT_ID?: string;
