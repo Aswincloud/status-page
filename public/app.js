@@ -217,6 +217,16 @@
       day: "numeric",
       hour: "2-digit",
       minute: "2-digit",
+      hour12: true,
+    });
+  }
+
+  // 12-hour clock (e.g. "3:05 PM") — shared by chart axes and hover tooltips.
+  function fmtClock(ts) {
+    return new Date(ts).toLocaleTimeString(undefined, {
+      hour: "numeric",
+      minute: "2-digit",
+      hour12: true,
     });
   }
 
@@ -302,8 +312,7 @@
       });
       for (let k = series.length; k < dotEls.length; k++) dotEls[k].hidden = true;
 
-      const time = new Date(p.ts).toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" });
-      showTipHTML(`<div class="tip-time">${time}</div>${rows.join("<br>")}`, px, topY != null ? topY : rect.top);
+      showTipHTML(`<div class="tip-time">${fmtClock(p.ts)}</div>${rows.join("<br>")}`, px, topY != null ? topY : rect.top);
     });
     svg.addEventListener("mouseleave", hideChartCursor);
   }
@@ -386,8 +395,15 @@
       .join("");
     let xLabels = "";
     if (points && points.length > 1) {
-      const f = (ts) => new Date(ts).toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" });
-      xLabels = `<span>${f(points[0].ts)}</span><span>${f(points[points.length - 1].ts)}</span>`;
+      // Evenly-spaced time ticks across the window (a real x-axis scale, not just
+      // the two endpoints). Index-based like the plotted line, so they line up.
+      // .chart-x is flex/space-between, so N spans distribute evenly with no CSS.
+      const n = points.length;
+      const want = Math.min(5, n);
+      const idx = [...new Set(
+        Array.from({ length: want }, (_, k) => Math.round((k / (want - 1)) * (n - 1))),
+      )];
+      xLabels = idx.map((i) => `<span>${fmtClock(points[i].ts)}</span>`).join("");
     }
     return { grid, yLabels, xLabels };
   }
@@ -670,19 +686,21 @@
   }
 
   // ---- incidents ----
-  function renderIncidents(incidents) {
-    const list = $("#incident-list");
-    if (!incidents || incidents.length === 0) {
-      list.innerHTML = `<li class="incident-empty">No incidents in the last 90 days. 🎉</li>`;
-      return;
-    }
-    list.innerHTML = incidents
-      .map((inc) => {
-        const ongoing = inc.resolved_at == null;
-        const dur = ongoing
-          ? fmtDur(Date.now() - inc.started_at)
-          : fmtDur(inc.resolved_at - inc.started_at);
-        return `
+  const INCIDENTS_SHOWN = 5; // collapse the rest behind a "Show more" button
+  let incidentsExpanded = false;
+  let lastIncidents = []; // cached so the Show more/less toggle re-renders without a refetch
+
+  $("#incident-more").addEventListener("click", () => {
+    incidentsExpanded = !incidentsExpanded;
+    renderIncidents(lastIncidents);
+  });
+
+  function incidentItem(inc) {
+    const ongoing = inc.resolved_at == null;
+    const dur = ongoing
+      ? fmtDur(Date.now() - inc.started_at)
+      : fmtDur(inc.resolved_at - inc.started_at);
+    return `
         <li class="incident ${ongoing ? "ongoing" : "resolved"}">
           <span class="incident-icon"></span>
           <div class="incident-body">
@@ -691,8 +709,33 @@
           </div>
           <div class="incident-dur ${ongoing ? "ongoing" : ""}">${ongoing ? "ongoing · " + dur : dur}</div>
         </li>`;
-      })
-      .join("");
+  }
+
+  function renderIncidents(incidents) {
+    lastIncidents = incidents || [];
+    const list = $("#incident-list");
+    const moreBtn = $("#incident-more");
+    if (!incidents || incidents.length === 0) {
+      list.innerHTML = `<li class="incident-empty">No incidents in the last 90 days. 🎉</li>`;
+      if (moreBtn) moreBtn.hidden = true;
+      return;
+    }
+    // Most recent first; show the first N unless the user expanded the list.
+    const sorted = [...incidents].sort((a, b) => b.started_at - a.started_at);
+    const hiddenCount = Math.max(0, sorted.length - INCIDENTS_SHOWN);
+    const visible = incidentsExpanded ? sorted : sorted.slice(0, INCIDENTS_SHOWN);
+    list.innerHTML = visible.map(incidentItem).join("");
+
+    if (moreBtn) {
+      if (hiddenCount === 0) {
+        moreBtn.hidden = true;
+      } else {
+        moreBtn.hidden = false;
+        moreBtn.textContent = incidentsExpanded
+          ? "Show less"
+          : `Show ${hiddenCount} more`;
+      }
+    }
   }
 
   function escapeHtml(s) {
