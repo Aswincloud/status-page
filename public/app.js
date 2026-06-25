@@ -61,6 +61,68 @@
     window.location.href = canTest ? "/api/auth/logout" : "/api/auth/login";
   });
 
+  // ---- low-speed email subscription (double opt-in) ----
+  (() => {
+    const toggle = $("#sub-toggle");
+    const form = $("#sub-form");
+    const email = $("#sub-email");
+    const submit = $("#sub-submit");
+    const cancel = $("#sub-cancel");
+    const msg = $("#sub-msg");
+    if (!toggle || !form) return;
+
+    const showMsg = (text, kind) => {
+      msg.textContent = text;
+      msg.className = "sub-msg" + (kind ? " " + kind : "");
+      msg.hidden = false;
+    };
+
+    toggle.addEventListener("click", () => {
+      form.hidden = false;
+      toggle.hidden = true;
+      msg.hidden = true;
+      email.focus();
+    });
+    cancel.addEventListener("click", () => {
+      form.hidden = true;
+      toggle.hidden = false;
+      form.reset();
+    });
+
+    form.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const addr = email.value.trim();
+      if (!addr) return;
+      submit.disabled = true;
+      submit.textContent = "Sending…";
+      try {
+        const res = await fetch("/api/subscribe", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ email: addr }),
+        });
+        if (res.ok) {
+          form.hidden = true;
+          toggle.hidden = false;
+          form.reset();
+          // Deliberately generic — we don't reveal whether the address was new.
+          showMsg("Check your inbox to confirm your subscription. 📬", "ok");
+        } else if (res.status === 429) {
+          showMsg("Too many sign-ups right now — try again in a minute.", "err");
+        } else if (res.status === 503) {
+          showMsg("Email alerts aren't available right now.", "err");
+        } else {
+          showMsg("That doesn't look like a valid email.", "err");
+        }
+      } catch {
+        showMsg("Network error — please try again.", "err");
+      } finally {
+        submit.disabled = false;
+        submit.textContent = "Subscribe";
+      }
+    });
+  })();
+
   // ---- sign-in result banner ----
   // The OAuth callback can't render UI, so on any failure it redirects to
   // /?auth=<code>. Turn that into a dismissible banner here (with a retry that

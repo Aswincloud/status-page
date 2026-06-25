@@ -11,6 +11,13 @@
     "enabled": true
   },
 
+  // Non-secret config. Low-speed subscriber alerts: email when download OR upload
+  // drops below this many Mbps (baseline is ~330; 150 ≈ "noticeably degraded").
+  "vars": {
+    "SPEED_ALERT_MBPS": "150",
+    "PUBLIC_ORIGIN": "https://status.aswincloud.com"
+  },
+
   // Static Assets: the public/ folder is served directly from Cloudflare's edge.
   // run_worker_first lists the routes that must hit the Worker BEFORE static
   // asset matching, so /api/* is handled by our code while everything else

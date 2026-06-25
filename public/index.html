@@ -43,6 +43,18 @@
       <section id="speed" class="speed" hidden>
         <h2 class="section-title">Internet speed</h2>
         <div id="speed-card" class="speed-card"></div>
+
+        <!-- Low-speed email alerts (double opt-in). Stable markup — not re-rendered. -->
+        <div id="subscribe" class="subscribe">
+          <button id="sub-toggle" class="sub-toggle" type="button">🔔 Get low-speed alerts</button>
+          <form id="sub-form" class="sub-form" hidden>
+            <input id="sub-email" class="sub-input" type="email" inputmode="email"
+                   autocomplete="email" placeholder="you@example.com" aria-label="Email for speed alerts" required>
+            <button id="sub-submit" class="sub-submit" type="submit">Subscribe</button>
+            <button id="sub-cancel" class="sub-cancel" type="button" aria-label="Cancel">×</button>
+          </form>
+          <p id="sub-msg" class="sub-msg" hidden></p>
+        </div>
       </section>
 
       <!-- Incident history -->

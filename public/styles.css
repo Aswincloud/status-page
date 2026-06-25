@@ -363,6 +363,45 @@ body {
 .speed-legend .when { margin-left: auto; color: var(--text-faint); }
 .speed-empty { color: var(--text-faint); font-size: 13px; padding: 10px 2px 4px; }
 
+/* ---- subscribe (low-speed alerts) ---- */
+.subscribe { margin-top: 12px; }
+.sub-toggle {
+  font-size: 12.5px; font-weight: 600;
+  padding: 8px 14px; border-radius: 9px;
+  border: 1px solid var(--border); background: var(--card-2); color: var(--text-dim);
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s, transform 0.1s;
+}
+.sub-toggle:hover { color: var(--text); background: var(--card); transform: translateY(-1px); }
+.sub-form { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.sub-input {
+  flex: 1 1 220px; min-width: 0;
+  font-size: 13.5px;
+  padding: 9px 12px; border-radius: 9px;
+  border: 1px solid var(--border); background: var(--card-2); color: var(--text);
+}
+.sub-input:focus { outline: none; border-color: rgba(45, 212, 191, 0.5); }
+.sub-submit {
+  font-size: 12.5px; font-weight: 600;
+  padding: 9px 16px; border-radius: 9px;
+  border: 1px solid transparent; background: var(--text); color: var(--bg);
+  cursor: pointer; white-space: nowrap;
+  transition: opacity 0.15s, transform 0.1s;
+}
+.sub-submit:hover:not(:disabled) { transform: translateY(-1px); }
+.sub-submit:disabled { opacity: 0.6; cursor: default; }
+.sub-cancel {
+  width: 34px; height: 34px; flex: none;
+  display: inline-grid; place-items: center;
+  font-size: 19px; line-height: 1;
+  border: 1px solid var(--border); border-radius: 9px;
+  background: transparent; color: var(--text-dim); cursor: pointer;
+}
+.sub-cancel:hover { color: var(--text); background: var(--card-2); }
+.sub-msg { margin: 10px 0 0; font-size: 13px; }
+.sub-msg.ok { color: var(--up); }
+.sub-msg.err { color: var(--down); }
+
 /* ---- incidents ---- */
 .incidents { margin-top: 30px; }
 .section-title { font-size: 13px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--text-dim); margin: 0 0 12px; }

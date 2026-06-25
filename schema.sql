@@ -46,6 +46,21 @@ CREATE TABLE IF NOT EXISTS control (
   v TEXT
 );
 
+-- Email subscribers for low-speed alerts. Double opt-in: a row starts 'pending'
+-- and only becomes 'active' when the user clicks the confirmation link, so the
+-- Resend key can never be used to mail arbitrary unconfirmed addresses.
+CREATE TABLE IF NOT EXISTS subscribers (
+  id            INTEGER PRIMARY KEY AUTOINCREMENT,
+  email         TEXT NOT NULL UNIQUE,
+  status        TEXT NOT NULL DEFAULT 'pending',  -- 'pending' | 'active'
+  confirm_token TEXT NOT NULL,                    -- click to activate
+  unsub_token   TEXT NOT NULL,                    -- click to unsubscribe (in every alert)
+  created_at    INTEGER NOT NULL,                 -- unix ms
+  confirmed_at  INTEGER,                          -- unix ms, null until confirmed
+  last_alert_at INTEGER                           -- unix ms of last low-speed alert sent
+);
+CREATE INDEX IF NOT EXISTS idx_subscribers_status ON subscribers(status);
+
 -- Seed the starter monitor so the page renders something on first paint, before
 -- the prober's first heartbeat arrives. The prober will upsert this same row.
 INSERT OR IGNORE INTO monitors (id, name, type, target, created_at)

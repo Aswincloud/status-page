@@ -6,7 +6,10 @@ import {
   IncomingSpeedtest,
   MonitorRow,
   STALE_MS,
+  confirmSubscriber,
+  countPendingSince,
   getControl,
+  getSubscriberByEmail,
   insertCheck,
   insertSpeedtest,
   latestCheck,
@@ -15,9 +18,11 @@ import {
   resolveIncident,
   setControl,
   startIncident,
+  unsubscribeByToken,
   upsertMonitor,
+  upsertPendingSubscriber,
 } from "./db";
-import { notify } from "./alerts";
+import { notify, notifyLowSpeed, sendConfirmEmail, sendWelcomeEmail } from "./alerts";
 import { getSession, ssoConfigured } from "./auth";
 import {
   dayBuckets,
@@ -128,14 +133,100 @@ export async function handleSpeedtest(req: Request, env: Env): Promise<Response>
     return json({ error: "download_mbps and upload_mbps required" }, { status: 400 });
   }
 
-  await insertSpeedtest(env.DB, Date.now(), {
+  const ts = Date.now();
+  await insertSpeedtest(env.DB, ts, {
     download_mbps: body.download_mbps,
     upload_mbps: body.upload_mbps,
     ping_ms: typeof body.ping_ms === "number" ? body.ping_ms : null,
     server: typeof body.server === "string" ? body.server : null,
     isp: typeof body.isp === "string" ? body.isp : null,
   });
+  // Fan out a low-speed alert to confirmed subscribers if this sample is below
+  // the threshold (throttled inside notifyLowSpeed). Non-blocking-ish: awaited so
+  // the Worker doesn't get torn down mid-send, but it self-gates to stay cheap.
+  await notifyLowSpeed(env, body.download_mbps, body.upload_mbps, ts);
   return json({ ok: true });
+}
+
+// ---- low-speed email subscriptions (public, double opt-in) -------------------
+
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+const SUBSCRIBE_WINDOW_MS = 60_000; // rate-limit window
+const SUBSCRIBE_MAX_PER_WINDOW = 5; // max new pending subscribes per window (anti-abuse)
+
+const randToken = () =>
+  Array.from(crypto.getRandomValues(new Uint8Array(24)), (b) => b.toString(16).padStart(2, "0")).join("");
+
+// A tiny HTML page for the confirm/unsubscribe link landings (GET in a browser).
+function landingPage(title: string, body: string): Response {
+  const html = `<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>${title} · aswincloud status</title>
+<style>body{font-family:-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;background:#0b0b0f;color:#f2f2f7;display:grid;place-items:center;min-height:100vh;margin:0}
+.box{max-width:420px;text-align:center;padding:32px;border:1px solid #26262f;border-radius:14px;background:#15151c}
+h1{font-size:19px;margin:0 0 10px}p{color:#9a9aa6;font-size:14px;margin:0 0 20px}
+a{display:inline-block;background:#f2f2f7;color:#14151a;text-decoration:none;font-size:13px;font-weight:600;padding:9px 16px;border-radius:8px}</style>
+<div class="box"><h1>${title}</h1><p>${body}</p><a href="https://status.aswincloud.com">Go to status page →</a></div>`;
+  return new Response(html, { headers: { "content-type": "text/html; charset=utf-8" } });
+}
+
+// POST /api/subscribe { email } — creates a PENDING subscriber + sends a confirm
+// email. Nothing is delivered to the address until they click confirm (double
+// opt-in), so this endpoint can't be used to mail-bomb arbitrary addresses.
+export async function handleSubscribe(req: Request, env: Env): Promise<Response> {
+  if (!env.RESEND_API_KEY || !env.ALERT_FROM) {
+    return json({ error: "email_not_configured" }, { status: 503 });
+  }
+  let body: { email?: string };
+  try {
+    body = await req.json();
+  } catch {
+    return json({ error: "invalid_json" }, { status: 400 });
+  }
+  const email = (body.email ?? "").trim().toLowerCase();
+  if (!EMAIL_RE.test(email) || email.length > 254) {
+    return json({ error: "invalid_email" }, { status: 400 });
+  }
+
+  // Rate-limit new pending subscribes (protects the Resend quota from abuse).
+  const now = Date.now();
+  const recent = await countPendingSince(env.DB, now - SUBSCRIBE_WINDOW_MS);
+  if (recent >= SUBSCRIBE_MAX_PER_WINDOW) {
+    return json({ error: "rate_limited" }, { status: 429 });
+  }
+
+  const existing = await getSubscriberByEmail(env.DB, email);
+  // Already active → don't re-send anything; respond the same as a fresh request
+  // so the endpoint doesn't leak who's already subscribed.
+  if (existing && existing.status === "active") {
+    return json({ ok: true });
+  }
+
+  // Always mint a fresh confirm token; keep the existing unsub token if any so a
+  // prior unsubscribe link (e.g. from an earlier active stint) stays meaningful.
+  const confirmToken = randToken();
+  const unsubToken = existing?.unsub_token ?? randToken();
+  await upsertPendingSubscriber(env.DB, email, confirmToken, unsubToken, now);
+  await sendConfirmEmail(env, email, confirmToken);
+  return json({ ok: true });
+}
+
+// GET /api/subscribe/confirm?token=... — activate a pending subscriber.
+export async function handleSubscribeConfirm(req: Request, env: Env): Promise<Response> {
+  const token = new URL(req.url).searchParams.get("token") ?? "";
+  if (!token) return landingPage("Invalid link", "This confirmation link is missing its token.");
+  const row = await confirmSubscriber(env.DB, token, Date.now());
+  if (!row) return landingPage("Link expired", "This confirmation link is invalid or already used.");
+  await sendWelcomeEmail(env, row.email, row.unsub_token);
+  return landingPage("You're subscribed ✓", "You'll get an email if the home internet speed drops below the alert threshold.");
+}
+
+// GET /api/subscribe/unsubscribe?token=... — remove a subscriber.
+export async function handleUnsubscribe(req: Request, env: Env): Promise<Response> {
+  const token = new URL(req.url).searchParams.get("token") ?? "";
+  if (!token) return landingPage("Invalid link", "This unsubscribe link is missing its token.");
+  const email = await unsubscribeByToken(env.DB, token);
+  if (!email) return landingPage("Already removed", "That subscription was already removed (or the link is invalid).");
+  return landingPage("Unsubscribed", "You won't receive any more speed alerts. You can re-subscribe anytime.");
 }
 
 const COOLDOWN_MS = 2 * 60 * 1000; // min gap between on-demand tests

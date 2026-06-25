@@ -24,6 +24,9 @@ export interface Env {
   RESEND_API_KEY?: string;
   ALERT_FROM?: string; // e.g. "aswincloud status <status@aswincloud.com>"
   ALERT_TO?: string; // e.g. "aswin@aswincloud.com"
+  // Low-speed subscriber alerts (public subscribe + confirm/unsubscribe):
+  SPEED_ALERT_MBPS?: string; // threshold; alert subscribers if down OR up drops below it (default 150)
+  PUBLIC_ORIGIN?: string; // e.g. "https://status.aswincloud.com" — for confirm/unsub links
   // Slack (bot token + channel id):
   SLACK_BOT_TOKEN?: string;
   SLACK_CHANNEL?: string; // channel ID, e.g. C0XXXXXXXXX
@@ -174,4 +177,85 @@ export async function setControl(db: D1Database, key: string, value: string): Pr
     .prepare(`INSERT INTO control (k, v) VALUES (?, ?) ON CONFLICT(k) DO UPDATE SET v = excluded.v`)
     .bind(key, value)
     .run();
+}
+
+// ---- subscribers (low-speed email alerts; double opt-in) ----
+
+export interface SubscriberRow {
+  id: number;
+  email: string;
+  status: string;
+  confirm_token: string;
+  unsub_token: string;
+  created_at: number;
+  confirmed_at: number | null;
+  last_alert_at: number | null;
+}
+
+export async function getSubscriberByEmail(db: D1Database, email: string): Promise<SubscriberRow | null> {
+  return await db
+    .prepare(`SELECT * FROM subscribers WHERE email = ?`)
+    .bind(email)
+    .first<SubscriberRow>();
+}
+
+// Create a pending subscriber, or refresh the confirm token if one already exists
+// but isn't active yet. Returns the (new or existing) row's tokens.
+export async function upsertPendingSubscriber(
+  db: D1Database,
+  email: string,
+  confirmToken: string,
+  unsubToken: string,
+  now: number,
+): Promise<void> {
+  await db
+    .prepare(
+      `INSERT INTO subscribers (email, status, confirm_token, unsub_token, created_at)
+       VALUES (?, 'pending', ?, ?, ?)
+       ON CONFLICT(email) DO UPDATE SET
+         confirm_token = excluded.confirm_token,
+         created_at = excluded.created_at`,
+    )
+    .bind(email, confirmToken, unsubToken, now)
+    .run();
+}
+
+// Activate a pending subscriber by its confirm token. Returns the row if matched.
+export async function confirmSubscriber(db: D1Database, token: string, now: number): Promise<SubscriberRow | null> {
+  const row = await db.prepare(`SELECT * FROM subscribers WHERE confirm_token = ?`).bind(token).first<SubscriberRow>();
+  if (!row) return null;
+  if (row.status !== "active") {
+    await db
+      .prepare(`UPDATE subscribers SET status = 'active', confirmed_at = ? WHERE id = ?`)
+      .bind(now, row.id)
+      .run();
+  }
+  return row;
+}
+
+// Remove a subscriber by its unsubscribe token. Returns the email if matched.
+export async function unsubscribeByToken(db: D1Database, token: string): Promise<string | null> {
+  const row = await db.prepare(`SELECT email FROM subscribers WHERE unsub_token = ?`).bind(token).first<{ email: string }>();
+  if (!row) return null;
+  await db.prepare(`DELETE FROM subscribers WHERE unsub_token = ?`).bind(token).run();
+  return row.email;
+}
+
+export async function listActiveSubscribers(db: D1Database): Promise<SubscriberRow[]> {
+  const { results } = await db
+    .prepare(`SELECT * FROM subscribers WHERE status = 'active'`)
+    .all<SubscriberRow>();
+  return results ?? [];
+}
+
+export async function markSubscriberAlerted(db: D1Database, id: number, now: number): Promise<void> {
+  await db.prepare(`UPDATE subscribers SET last_alert_at = ? WHERE id = ?`).bind(now, id).run();
+}
+
+export async function countPendingSince(db: D1Database, since: number): Promise<number> {
+  const row = await db
+    .prepare(`SELECT COUNT(*) AS n FROM subscribers WHERE created_at > ?`)
+    .bind(since)
+    .first<{ n: number }>();
+  return row?.n ?? 0;
 }

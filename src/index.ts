@@ -20,6 +20,9 @@ import {
   handleRequestTest,
   handleSpeedtest,
   handleStatus,
+  handleSubscribe,
+  handleSubscribeConfirm,
+  handleUnsubscribe,
 } from "./api";
 import { handleCallback, handleLogin, handleLogout } from "./auth";
 
@@ -37,6 +40,11 @@ export default {
     if (p === "/api/control-check" && req.method === "POST") return handleControlCheck(req, env);
     if (p === "/api/request-test" && req.method === "POST") return handleRequestTest(req, env);
     if (p === "/api/status" && req.method === "GET") return handleStatus(req, env, ctx);
+
+    // Low-speed email subscriptions (public; double opt-in)
+    if (p === "/api/subscribe" && req.method === "POST") return handleSubscribe(req, env);
+    if (p === "/api/subscribe/confirm" && req.method === "GET") return handleSubscribeConfirm(req, env);
+    if (p === "/api/subscribe/unsubscribe" && req.method === "GET") return handleUnsubscribe(req, env);
 
     // Google OIDC
     if (p === "/api/auth/login") return handleLogin(req, env);
