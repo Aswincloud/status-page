@@ -364,26 +364,45 @@ body {
 .speed-empty { color: var(--text-faint); font-size: 13px; padding: 10px 2px 4px; }
 
 /* ---- subscribe (low-speed alerts) ---- */
-.subscribe { margin-top: 12px; }
-.sub-toggle {
-  font-size: 12.5px; font-weight: 600;
-  padding: 8px 14px; border-radius: 9px;
-  border: 1px solid var(--border); background: var(--card-2); color: var(--text-dim);
-  cursor: pointer;
-  transition: background 0.15s, color 0.15s, transform 0.1s;
+/* Its own panel, matching the speed card's language so it doesn't read as loose
+   controls floating under the card. */
+.subscribe {
+  margin-top: 14px;
+  padding: 16px 18px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--card);
 }
-.sub-toggle:hover { color: var(--text); background: var(--card); transform: translateY(-1px); }
-.sub-form { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+
+/* Header row: bell + title/subtitle on the left, the toggle button on the right. */
+.sub-head { display: flex; align-items: center; gap: 12px; }
+.sub-bell { font-size: 18px; line-height: 1; flex: none; }
+.sub-head-text { flex: 1; min-width: 0; }
+.sub-head-title { font-size: 14px; font-weight: 600; color: var(--text); }
+.sub-head-sub { font-size: 12.5px; color: var(--text-dim); margin-top: 2px; }
+
+.sub-toggle {
+  flex: none;
+  font-size: 12.5px; font-weight: 600;
+  padding: 8px 16px; border-radius: 9px;
+  border: 1px solid transparent; background: var(--text); color: var(--bg);
+  cursor: pointer; white-space: nowrap;
+  transition: opacity 0.15s, transform 0.1s;
+}
+.sub-toggle:hover { transform: translateY(-1px); }
+
+.sub-form { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-top: 14px; }
 .sub-input {
-  flex: 1 1 220px; min-width: 0;
+  flex: 1 1 220px; min-width: 0; height: 38px;
   font-size: 13.5px;
-  padding: 9px 12px; border-radius: 9px;
+  padding: 0 12px; border-radius: 9px;
   border: 1px solid var(--border); background: var(--card-2); color: var(--text);
 }
 .sub-input:focus { outline: none; border-color: rgba(45, 212, 191, 0.5); }
 .sub-submit {
+  height: 38px; flex: none;
   font-size: 12.5px; font-weight: 600;
-  padding: 9px 16px; border-radius: 9px;
+  padding: 0 16px; border-radius: 9px;
   border: 1px solid transparent; background: var(--text); color: var(--bg);
   cursor: pointer; white-space: nowrap;
   transition: opacity 0.15s, transform 0.1s;
@@ -391,32 +410,41 @@ body {
 .sub-submit:hover:not(:disabled) { transform: translateY(-1px); }
 .sub-submit:disabled { opacity: 0.6; cursor: default; }
 .sub-cancel {
-  width: 34px; height: 34px; flex: none;
+  width: 38px; height: 38px; flex: none;
   display: inline-grid; place-items: center;
   font-size: 19px; line-height: 1;
   border: 1px solid var(--border); border-radius: 9px;
   background: transparent; color: var(--text-dim); cursor: pointer;
 }
 .sub-cancel:hover { color: var(--text); background: var(--card-2); }
-.sub-msg { margin: 10px 0 0; font-size: 13px; }
+.sub-msg { margin: 12px 0 0; font-size: 13px; }
 .sub-msg.ok { color: var(--up); }
 .sub-msg.err { color: var(--down); }
+
+/* Owner threshold editor: label on its own line, then a tidy input+unit+Save row. */
 .sub-threshold {
-  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
-  margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--border-soft);
+  margin-top: 14px; padding-top: 14px; border-top: 1px solid var(--border-soft);
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
   font-size: 13px; color: var(--text-dim);
 }
-.thr-label { color: var(--text-dim); }
+.thr-label { flex-basis: 100%; color: var(--text-dim); }
+/* Unit sits inside the field, right-aligned, so "200 Mbps" reads as one control. */
+.thr-field { position: relative; display: inline-flex; align-items: center; }
 .thr-input {
-  width: 84px; font-size: 13.5px;
-  padding: 7px 10px; border-radius: 8px;
+  width: 110px; height: 38px;
+  font-size: 13.5px; font-variant-numeric: tabular-nums;
+  padding: 0 48px 0 12px; border-radius: 9px;
   border: 1px solid var(--border); background: var(--card-2); color: var(--text);
 }
 .thr-input:focus { outline: none; border-color: rgba(45, 212, 191, 0.5); }
-.thr-unit { color: var(--text-faint); }
+.thr-unit {
+  position: absolute; right: 12px;
+  font-size: 12px; color: var(--text-faint); pointer-events: none;
+}
 .thr-save {
+  height: 38px; flex: none;
   font-size: 12.5px; font-weight: 600;
-  padding: 7px 13px; border-radius: 8px;
+  padding: 0 16px; border-radius: 9px;
   border: 1px solid var(--border); background: var(--card-2); color: var(--text);
   cursor: pointer; transition: background 0.15s, transform 0.1s;
 }

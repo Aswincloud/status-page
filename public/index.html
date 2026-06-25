@@ -46,7 +46,15 @@
 
         <!-- Low-speed email alerts (double opt-in). Stable markup — not re-rendered. -->
         <div id="subscribe" class="subscribe">
-          <button id="sub-toggle" class="sub-toggle" type="button">🔔 Get low-speed alerts</button>
+          <div class="sub-head">
+            <span class="sub-bell" aria-hidden="true">🔔</span>
+            <div class="sub-head-text">
+              <div class="sub-head-title">Speed alerts</div>
+              <div class="sub-head-sub">Get an email if the home connection slows down.</div>
+            </div>
+            <button id="sub-toggle" class="sub-toggle" type="button">Subscribe</button>
+          </div>
+
           <form id="sub-form" class="sub-form" hidden>
             <input id="sub-email" class="sub-input" type="email" inputmode="email"
                    autocomplete="email" placeholder="you@example.com" aria-label="Email for speed alerts" required>
@@ -57,9 +65,11 @@
 
           <!-- Owner-only: edit the alert threshold live. Shown only when signed in. -->
           <div id="sub-threshold" class="sub-threshold" hidden>
-            <label class="thr-label" for="thr-input">Alert me below</label>
-            <input id="thr-input" class="thr-input" type="number" min="1" step="10" inputmode="numeric" aria-label="Alert threshold in Mbps">
-            <span class="thr-unit">Mbps</span>
+            <label class="thr-label" for="thr-input">Alert me when speed drops below</label>
+            <span class="thr-field">
+              <input id="thr-input" class="thr-input" type="number" min="1" step="10" inputmode="numeric" aria-label="Alert threshold in Mbps">
+              <span class="thr-unit">Mbps</span>
+            </span>
             <button id="thr-save" class="thr-save" type="button">Save</button>
             <span id="thr-msg" class="thr-msg"></span>
           </div>
