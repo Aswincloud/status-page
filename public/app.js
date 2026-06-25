@@ -72,17 +72,17 @@
   // and gets an inline editor to change the alert threshold live.
   let reflectSubscribe = () => {}; // set below; called by refreshCanTest()
   (() => {
-    const toggle = $("#sub-toggle");
+    const openBtn = $("#sub-open");
+    const modal = $("#sub-modal");
     const form = $("#sub-form");
     const email = $("#sub-email");
     const submit = $("#sub-submit");
-    const cancel = $("#sub-cancel");
     const msg = $("#sub-msg");
     const thr = $("#sub-threshold");
     const thrInput = $("#thr-input");
     const thrSave = $("#thr-save");
     const thrMsg = $("#thr-msg");
-    if (!toggle || !form) return;
+    if (!openBtn || !modal || !form) return;
 
     const showMsg = (text, kind) => {
       msg.textContent = text;
@@ -90,8 +90,31 @@
       msg.hidden = false;
     };
 
-    // Keep the form prefilled for the signed-in owner, and show/hide the
-    // threshold editor (owner only). Don't clobber the field while they type.
+    // ---- modal open/close ----
+    let lastFocus = null;
+    const openModal = () => {
+      lastFocus = document.activeElement;
+      modal.hidden = false;
+      msg.hidden = true;
+      if (sessionEmail && !email.value) email.value = sessionEmail;
+      // focus the first useful field
+      setTimeout(() => email.focus(), 0);
+    };
+    const closeModal = () => {
+      modal.hidden = true;
+      if (lastFocus && lastFocus.focus) lastFocus.focus();
+    };
+    openBtn.addEventListener("click", openModal);
+    // backdrop + any [data-close] (the × and backdrop) close it
+    modal.addEventListener("click", (e) => {
+      if (e.target.closest("[data-close]")) closeModal();
+    });
+    document.addEventListener("keydown", (e) => {
+      if (e.key === "Escape" && !modal.hidden) closeModal();
+    });
+
+    // Prefill the email for the signed-in owner, and show/hide the threshold
+    // editor (owner only). Don't clobber a field the user is typing in.
     reflectSubscribe = () => {
       if (sessionEmail && document.activeElement !== email && !email.value) {
         email.value = sessionEmail;
@@ -103,19 +126,6 @@
         }
       }
     };
-
-    toggle.addEventListener("click", () => {
-      form.hidden = false;
-      toggle.hidden = true;
-      msg.hidden = true;
-      if (sessionEmail && !email.value) email.value = sessionEmail;
-      email.focus();
-    });
-    cancel.addEventListener("click", () => {
-      form.hidden = true;
-      toggle.hidden = false;
-      form.reset();
-    });
 
     form.addEventListener("submit", async (e) => {
       e.preventDefault();
@@ -131,9 +141,6 @@
         });
         const j = await res.json().catch(() => ({}));
         if (res.ok) {
-          form.hidden = true;
-          toggle.hidden = false;
-          form.reset();
           if (j.status === "active") {
             // Signed-in owner: activated instantly, no email confirmation needed.
             showMsg("Subscribed ✓ — you'll get an email if speed drops.", "ok");
