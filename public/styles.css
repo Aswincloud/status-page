@@ -124,6 +124,28 @@ body {
 .signin-btn:active { transform: translateY(0); }
 .signin-btn.active { color: var(--up); border-color: rgba(48, 209, 88, 0.4); background: var(--up-soft); }
 
+/* ---- provider picker popover (shown when >1 IdP is available) ---- */
+.provider-menu {
+  position: absolute; z-index: 110;
+  min-width: 200px;
+  padding: 6px;
+  border-radius: 12px;
+  border: 1px solid var(--border);
+  background: var(--card);
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.4);
+  animation: modal-pop 0.14s ease-out;
+}
+.provider-item {
+  display: block;
+  padding: 10px 12px;
+  border-radius: 8px;
+  color: var(--text-dim);
+  font-size: 13px; font-weight: 600;
+  text-decoration: none;
+  white-space: nowrap;
+}
+.provider-item:hover { color: var(--text); background: var(--up-soft); }
+
 /* ---- sign-in result banner (failed OAuth callback redirects here) ---- */
 .auth-banner {
   display: flex; align-items: center; gap: 12px;

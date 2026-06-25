@@ -58,13 +58,71 @@
     if (!btn) return;
     btn.textContent = canTest ? "Sign out" : "Sign in";
     btn.classList.toggle("active", canTest);
-    btn.title = canTest ? "Signed in as owner — click to sign out" : "Sign in with Google (owner)";
+    btn.title = canTest ? "Signed in as owner — click to sign out" : "Sign in (owner)";
   }
 
-  // The sign-in button: straight to Google when signed out, logout when signed in.
-  $("#signin").addEventListener("click", () => {
-    window.location.href = canTest ? "/api/auth/logout" : "/api/auth/login";
+  // Which IdPs to offer, fetched lazily from the broker on first sign-in click and
+  // cached for the page lifetime. Buttons are driven entirely by this list, so a
+  // provider appears the moment its app is added on the broker — no UI change here.
+  let providersCache = null;
+  async function getProviders() {
+    if (providersCache) return providersCache;
+    try {
+      const r = await fetch("/api/auth/providers", { cache: "no-store" });
+      const j = await r.json();
+      providersCache = Array.isArray(j.providers) && j.providers.length ? j.providers : null;
+    } catch {
+      providersCache = null;
+    }
+    return providersCache || [{ id: "google", name: "Google" }]; // never dead-end
+  }
+
+  // Signed in → logout. Signed out → pick a provider: one goes straight there,
+  // several open a small popover anchored under the button.
+  $("#signin").addEventListener("click", async (e) => {
+    if (canTest) {
+      window.location.href = "/api/auth/logout";
+      return;
+    }
+    e.stopPropagation();
+    const providers = await getProviders();
+    if (providers.length === 1) {
+      window.location.href = `/api/auth/login?provider=${encodeURIComponent(providers[0].id)}`;
+      return;
+    }
+    openProviderMenu($("#signin"), providers);
   });
+
+  function openProviderMenu(anchor, providers) {
+    closeProviderMenu();
+    const menu = document.createElement("div");
+    menu.className = "provider-menu";
+    menu.id = "provider-menu";
+    menu.setAttribute("role", "menu");
+    for (const p of providers) {
+      const a = document.createElement("a");
+      a.className = "provider-item";
+      a.setAttribute("role", "menuitem");
+      a.href = `/api/auth/login?provider=${encodeURIComponent(p.id)}`;
+      a.textContent = `Continue with ${p.name}`;
+      menu.appendChild(a);
+    }
+    const r = anchor.getBoundingClientRect();
+    menu.style.top = `${Math.round(r.bottom + window.scrollY + 6)}px`;
+    menu.style.right = `${Math.round(window.innerWidth - r.right)}px`;
+    document.body.appendChild(menu);
+    // Defer wiring the outside-click so this same click doesn't immediately close it.
+    setTimeout(() => {
+      document.addEventListener("click", closeProviderMenu, { once: true });
+      document.addEventListener("keydown", onProviderMenuEsc);
+    }, 0);
+  }
+  function onProviderMenuEsc(e) { if (e.key === "Escape") closeProviderMenu(); }
+  function closeProviderMenu() {
+    const m = $("#provider-menu");
+    if (m) m.remove();
+    document.removeEventListener("keydown", onProviderMenuEsc);
+  }
 
   // ---- low-speed email subscription ----
   // Visitors: double opt-in (POST → confirmation email → click). The signed-in

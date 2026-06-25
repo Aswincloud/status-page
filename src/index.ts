@@ -25,7 +25,7 @@ import {
   handleSubscribeConfirm,
   handleUnsubscribe,
 } from "./api";
-import { handleCallback, handleLogin, handleLogout } from "./auth";
+import { handleCallback, handleLogin, handleLogout, handleProviders } from "./auth";
 
 export { AgentLink } from "./agent-link";
 
@@ -48,7 +48,8 @@ export default {
     if (p === "/api/subscribe/unsubscribe" && req.method === "GET") return handleUnsubscribe(req, env);
     if (p === "/api/subscribe/threshold" && req.method === "PATCH") return handleSetThreshold(req, env);
 
-    // Google OIDC
+    // Sign-in via the central OAuth broker (Google / GitHub / Microsoft)
+    if (p === "/api/auth/providers" && req.method === "GET") return handleProviders(req, env);
     if (p === "/api/auth/login") return handleLogin(req, env);
     if (p === "/api/auth/callback") return handleCallback(req, env);
     if (p === "/api/auth/logout") return handleLogout(req);
