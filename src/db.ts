@@ -241,6 +241,26 @@ export async function unsubscribeByToken(db: D1Database, token: string): Promise
   return row.email;
 }
 
+// Create or activate a subscriber directly as 'active' (used when the request is
+// from the signed-in owner subscribing their own verified email — no opt-in needed).
+export async function activateSubscriber(
+  db: D1Database,
+  email: string,
+  unsubToken: string,
+  now: number,
+): Promise<void> {
+  await db
+    .prepare(
+      `INSERT INTO subscribers (email, status, confirm_token, unsub_token, created_at, confirmed_at)
+       VALUES (?, 'active', '', ?, ?, ?)
+       ON CONFLICT(email) DO UPDATE SET
+         status = 'active',
+         confirmed_at = COALESCE(subscribers.confirmed_at, excluded.confirmed_at)`,
+    )
+    .bind(email, unsubToken, now, now)
+    .run();
+}
+
 export async function listActiveSubscribers(db: D1Database): Promise<SubscriberRow[]> {
   const { results } = await db
     .prepare(`SELECT * FROM subscribers WHERE status = 'active'`)

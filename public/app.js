@@ -25,6 +25,8 @@
   let canTest = false; // is this visitor signed in as owner?
   let agentOnline = false; // is the home agent's WebSocket linked?
   let ssoConfigured = false;
+  let sessionEmail = null; // signed-in email (null if not signed in)
+  let speedThreshold = null; // current low-speed alert threshold (Mbps)
 
   async function refreshCanTest() {
     try {
@@ -33,10 +35,13 @@
       canTest = !!j.canTest;
       agentOnline = !!j.agentOnline;
       ssoConfigured = !!j.ssoConfigured;
+      sessionEmail = j.email || null;
+      speedThreshold = j.speedThreshold ?? null;
     } catch {
       canTest = false;
     }
     reflectUnlock();
+    reflectSubscribe(); // prefill email + reveal threshold editor when signed in
     // The Test button lives in the speed panel, which renderSpeed() only rebuilds
     // on a status tick. If our owner state just changed (e.g. just signed in), the
     // panel was likely already rendered without the button — re-render it now so the
@@ -61,7 +66,11 @@
     window.location.href = canTest ? "/api/auth/logout" : "/api/auth/login";
   });
 
-  // ---- low-speed email subscription (double opt-in) ----
+  // ---- low-speed email subscription ----
+  // Visitors: double opt-in (POST → confirmation email → click). The signed-in
+  // owner subscribing their OWN email skips opt-in (the session proves ownership),
+  // and gets an inline editor to change the alert threshold live.
+  let reflectSubscribe = () => {}; // set below; called by refreshCanTest()
   (() => {
     const toggle = $("#sub-toggle");
     const form = $("#sub-form");
@@ -69,6 +78,10 @@
     const submit = $("#sub-submit");
     const cancel = $("#sub-cancel");
     const msg = $("#sub-msg");
+    const thr = $("#sub-threshold");
+    const thrInput = $("#thr-input");
+    const thrSave = $("#thr-save");
+    const thrMsg = $("#thr-msg");
     if (!toggle || !form) return;
 
     const showMsg = (text, kind) => {
@@ -77,10 +90,25 @@
       msg.hidden = false;
     };
 
+    // Keep the form prefilled for the signed-in owner, and show/hide the
+    // threshold editor (owner only). Don't clobber the field while they type.
+    reflectSubscribe = () => {
+      if (sessionEmail && document.activeElement !== email && !email.value) {
+        email.value = sessionEmail;
+      }
+      if (thr) {
+        thr.hidden = !canTest;
+        if (canTest && speedThreshold != null && document.activeElement !== thrInput) {
+          thrInput.value = speedThreshold;
+        }
+      }
+    };
+
     toggle.addEventListener("click", () => {
       form.hidden = false;
       toggle.hidden = true;
       msg.hidden = true;
+      if (sessionEmail && !email.value) email.value = sessionEmail;
       email.focus();
     });
     cancel.addEventListener("click", () => {
@@ -101,12 +129,18 @@
           headers: { "content-type": "application/json" },
           body: JSON.stringify({ email: addr }),
         });
+        const j = await res.json().catch(() => ({}));
         if (res.ok) {
           form.hidden = true;
           toggle.hidden = false;
           form.reset();
-          // Deliberately generic — we don't reveal whether the address was new.
-          showMsg("Check your inbox to confirm your subscription. 📬", "ok");
+          if (j.status === "active") {
+            // Signed-in owner: activated instantly, no email confirmation needed.
+            showMsg("Subscribed ✓ — you'll get an email if speed drops.", "ok");
+          } else {
+            // Generic — we don't reveal whether the address was new.
+            showMsg("Check your inbox to confirm your subscription. 📬", "ok");
+          }
         } else if (res.status === 429) {
           showMsg("Too many sign-ups right now — try again in a minute.", "err");
         } else if (res.status === 503) {
@@ -121,6 +155,46 @@
         submit.textContent = "Subscribe";
       }
     });
+
+    // Threshold editor (owner only) — PATCH the live alert threshold.
+    if (thrSave) {
+      thrSave.addEventListener("click", async () => {
+        const mbps = Number(thrInput.value);
+        if (!Number.isFinite(mbps) || mbps <= 0) {
+          thrMsg.textContent = "Enter a number > 0";
+          thrMsg.className = "thr-msg err";
+          return;
+        }
+        thrSave.disabled = true;
+        const prev = thrSave.textContent;
+        thrSave.textContent = "Saving…";
+        try {
+          const res = await fetch("/api/subscribe/threshold", {
+            method: "PATCH",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({ mbps }),
+          });
+          if (res.ok) {
+            const j = await res.json();
+            speedThreshold = j.mbps;
+            thrMsg.textContent = `Saved · alert below ${j.mbps} Mbps`;
+            thrMsg.className = "thr-msg ok";
+          } else if (res.status === 401) {
+            thrMsg.textContent = "Sign in to change this.";
+            thrMsg.className = "thr-msg err";
+          } else {
+            thrMsg.textContent = "Couldn't save.";
+            thrMsg.className = "thr-msg err";
+          }
+        } catch {
+          thrMsg.textContent = "Network error.";
+          thrMsg.className = "thr-msg err";
+        } finally {
+          thrSave.disabled = false;
+          thrSave.textContent = prev;
+        }
+      });
+    }
   })();
 
   // ---- sign-in result banner ----

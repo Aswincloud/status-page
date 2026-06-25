@@ -153,9 +153,20 @@ const DEFAULT_SPEED_ALERT_MBPS = 150;
 const SUB_ALERT_COOLDOWN_MS = 6 * 60 * 60 * 1000; // per-subscriber: at most one low-speed email / 6h
 const GLOBAL_LOWSPEED_GAP_MS = 30 * 60 * 1000; // don't even evaluate fan-out more than once / 30m
 
+// Synchronous fallback (env var → built-in default), used where we only have env.
 function speedThreshold(env: Env): number {
   const n = Number(env.SPEED_ALERT_MBPS);
   return Number.isFinite(n) && n > 0 ? n : DEFAULT_SPEED_ALERT_MBPS;
+}
+
+// The live threshold: a runtime-editable value in the `control` table (set from the
+// signed-in UI) takes precedence over the env-var default, so it can change without
+// a redeploy. Falls back to the env var, then the built-in default.
+export async function liveSpeedThreshold(env: Env): Promise<number> {
+  const v = await getControl(env.DB, "speed_alert_mbps");
+  const n = Number(v);
+  if (Number.isFinite(n) && n > 0) return n;
+  return speedThreshold(env);
 }
 
 function publicOrigin(env: Env): string {
@@ -220,7 +231,7 @@ export async function sendWelcomeEmail(env: Env, email: string, unsubToken: stri
 // all active subscribers — globally throttled (≤1 fan-out per 30m) and per-
 // subscriber throttled (≤1 per 6h) so a sustained dip can't spam anyone.
 export async function notifyLowSpeed(env: Env, downMbps: number, upMbps: number, ts: number): Promise<void> {
-  const threshold = speedThreshold(env);
+  const threshold = await liveSpeedThreshold(env);
   if (downMbps >= threshold && upMbps >= threshold) return; // speed is fine
   if (!env.RESEND_API_KEY || !env.ALERT_FROM) return; // email not configured
 

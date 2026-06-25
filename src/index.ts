@@ -20,6 +20,7 @@ import {
   handleRequestTest,
   handleSpeedtest,
   handleStatus,
+  handleSetThreshold,
   handleSubscribe,
   handleSubscribeConfirm,
   handleUnsubscribe,
@@ -45,6 +46,7 @@ export default {
     if (p === "/api/subscribe" && req.method === "POST") return handleSubscribe(req, env);
     if (p === "/api/subscribe/confirm" && req.method === "GET") return handleSubscribeConfirm(req, env);
     if (p === "/api/subscribe/unsubscribe" && req.method === "GET") return handleUnsubscribe(req, env);
+    if (p === "/api/subscribe/threshold" && req.method === "PATCH") return handleSetThreshold(req, env);
 
     // Google OIDC
     if (p === "/api/auth/login") return handleLogin(req, env);

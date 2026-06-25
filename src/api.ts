@@ -6,6 +6,7 @@ import {
   IncomingSpeedtest,
   MonitorRow,
   STALE_MS,
+  activateSubscriber,
   confirmSubscriber,
   countPendingSince,
   getControl,
@@ -22,7 +23,7 @@ import {
   upsertMonitor,
   upsertPendingSubscriber,
 } from "./db";
-import { notify, notifyLowSpeed, sendConfirmEmail, sendWelcomeEmail } from "./alerts";
+import { liveSpeedThreshold, notify, notifyLowSpeed, sendConfirmEmail, sendWelcomeEmail } from "./alerts";
 import { getSession, ssoConfigured } from "./auth";
 import {
   dayBuckets,
@@ -195,10 +196,22 @@ export async function handleSubscribe(req: Request, env: Env): Promise<Response>
   }
 
   const existing = await getSubscriberByEmail(env.DB, email);
-  // Already active → don't re-send anything; respond the same as a fresh request
-  // so the endpoint doesn't leak who's already subscribed.
+
+  // If the requester is signed in AND subscribing their OWN verified email, the
+  // session already proves they own it — skip double opt-in and activate directly.
+  const sessionEmail = (await getSession(req, env))?.toLowerCase();
+  if (sessionEmail && sessionEmail === email) {
+    if (existing && existing.status === "active") return json({ ok: true, status: "active" });
+    const unsubToken = existing?.unsub_token ?? randToken();
+    await activateSubscriber(env.DB, email, unsubToken, now);
+    await sendWelcomeEmail(env, email, unsubToken);
+    return json({ ok: true, status: "active" });
+  }
+
+  // Otherwise: double opt-in. Already active → don't re-send anything; respond the
+  // same as a fresh request so the endpoint doesn't leak who's already subscribed.
   if (existing && existing.status === "active") {
-    return json({ ok: true });
+    return json({ ok: true, status: "pending" });
   }
 
   // Always mint a fresh confirm token; keep the existing unsub token if any so a
@@ -207,7 +220,27 @@ export async function handleSubscribe(req: Request, env: Env): Promise<Response>
   const unsubToken = existing?.unsub_token ?? randToken();
   await upsertPendingSubscriber(env.DB, email, confirmToken, unsubToken, now);
   await sendConfirmEmail(env, email, confirmToken);
-  return json({ ok: true });
+  return json({ ok: true, status: "pending" });
+}
+
+// PATCH /api/subscribe/threshold { mbps } — set the low-speed alert threshold.
+// Session-gated (owner only). Stored in the `control` table so it takes effect
+// without a redeploy; liveSpeedThreshold() reads it.
+export async function handleSetThreshold(req: Request, env: Env): Promise<Response> {
+  const email = await getSession(req, env);
+  if (!email) return json({ error: "unauthorized" }, { status: 401 });
+  let body: { mbps?: number };
+  try {
+    body = await req.json();
+  } catch {
+    return json({ error: "invalid_json" }, { status: 400 });
+  }
+  const mbps = Number(body.mbps);
+  if (!Number.isFinite(mbps) || mbps <= 0 || mbps > 100000) {
+    return json({ error: "invalid_mbps" }, { status: 400 });
+  }
+  await setControl(env.DB, "speed_alert_mbps", String(Math.round(mbps)));
+  return json({ ok: true, mbps: Math.round(mbps) });
 }
 
 // GET /api/subscribe/confirm?token=... — activate a pending subscriber.
@@ -249,14 +282,28 @@ async function authorize(
 }
 
 // GET /api/can-test — is THIS visitor signed in as owner? (uncached, per-session)
+// Also returns the signed-in email (so the UI can prefill the subscribe field and
+// skip opt-in for it) and the live alert threshold (so the owner can edit it).
 export async function handleCanTest(req: Request, env: Env): Promise<Response> {
-  const { ok, via } = await authorize(req, env);
-  const linked = await agentLink(env)
-    .fetch("https://do/connected")
-    .then((r) => r.json() as Promise<{ connected: boolean }>)
-    .catch(() => ({ connected: false }));
+  const sessionEmail = await getSession(req, env);
+  const ok = !!sessionEmail || (!!env.CONTROL_TOKEN && bearer(req) === env.CONTROL_TOKEN);
+  const via = sessionEmail ? "session" : ok ? "token" : null;
+  const [linked, threshold] = await Promise.all([
+    agentLink(env)
+      .fetch("https://do/connected")
+      .then((r) => r.json() as Promise<{ connected: boolean }>)
+      .catch(() => ({ connected: false })),
+    liveSpeedThreshold(env),
+  ]);
   return json(
-    { canTest: ok, via, agentOnline: linked.connected, ssoConfigured: ssoConfigured(env) },
+    {
+      canTest: ok,
+      via,
+      agentOnline: linked.connected,
+      ssoConfigured: ssoConfigured(env),
+      email: sessionEmail ?? null,
+      speedThreshold: threshold,
+    },
     { headers: { "cache-control": "no-store" } },
   );
 }

@@ -54,6 +54,15 @@
             <button id="sub-cancel" class="sub-cancel" type="button" aria-label="Cancel">×</button>
           </form>
           <p id="sub-msg" class="sub-msg" hidden></p>
+
+          <!-- Owner-only: edit the alert threshold live. Shown only when signed in. -->
+          <div id="sub-threshold" class="sub-threshold" hidden>
+            <label class="thr-label" for="thr-input">Alert me below</label>
+            <input id="thr-input" class="thr-input" type="number" min="1" step="10" inputmode="numeric" aria-label="Alert threshold in Mbps">
+            <span class="thr-unit">Mbps</span>
+            <button id="thr-save" class="thr-save" type="button">Save</button>
+            <span id="thr-msg" class="thr-msg"></span>
+          </div>
         </div>
       </section>
 

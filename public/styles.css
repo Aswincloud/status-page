@@ -401,6 +401,30 @@ body {
 .sub-msg { margin: 10px 0 0; font-size: 13px; }
 .sub-msg.ok { color: var(--up); }
 .sub-msg.err { color: var(--down); }
+.sub-threshold {
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+  margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--border-soft);
+  font-size: 13px; color: var(--text-dim);
+}
+.thr-label { color: var(--text-dim); }
+.thr-input {
+  width: 84px; font-size: 13.5px;
+  padding: 7px 10px; border-radius: 8px;
+  border: 1px solid var(--border); background: var(--card-2); color: var(--text);
+}
+.thr-input:focus { outline: none; border-color: rgba(45, 212, 191, 0.5); }
+.thr-unit { color: var(--text-faint); }
+.thr-save {
+  font-size: 12.5px; font-weight: 600;
+  padding: 7px 13px; border-radius: 8px;
+  border: 1px solid var(--border); background: var(--card-2); color: var(--text);
+  cursor: pointer; transition: background 0.15s, transform 0.1s;
+}
+.thr-save:hover:not(:disabled) { background: var(--card); transform: translateY(-1px); }
+.thr-save:disabled { opacity: 0.6; cursor: default; }
+.thr-msg { font-size: 12.5px; }
+.thr-msg.ok { color: var(--up); }
+.thr-msg.err { color: var(--down); }
 
 /* ---- incidents ---- */
 .incidents { margin-top: 30px; }
