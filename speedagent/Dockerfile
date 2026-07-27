@@ -1,5 +1,5 @@
 # Home speed agent: Node 22 + the official Ookla speedtest CLI.
-FROM node:22-alpine
+FROM node:26-alpine
 
 # Ookla CLI needs these; arch is auto-detected so the image works on x86_64 + arm64.
 RUN apk add --no-cache ca-certificates tar wget \
