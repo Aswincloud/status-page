@@ -1,5 +1,5 @@
 # Tiny prober image: Node 22 on Alpine + iputils for real ICMP ping.
-FROM node:22-alpine
+FROM node:26-alpine
 
 # iputils provides a ping that reports RTT and works with NET_RAW capability.
 RUN apk add --no-cache iputils
