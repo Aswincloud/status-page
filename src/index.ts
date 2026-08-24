@@ -5,6 +5,8 @@
 import {
   Env,
   RETENTION_MS,
+  rollupDaily,
+  pruneOldDailyStats,
   STALE_MS,
   listMonitors,
   latestCheck,
@@ -79,7 +81,11 @@ export default {
       }
     }
 
+    // Fold the last minute of checks into daily_stats before pruning, so the
+    // aggregate history is never missing rows that retention is about to drop.
+    await rollupDaily(env.DB);
     await pruneOldChecks(env.DB, now - RETENTION_MS);
     await pruneOldSpeedtests(env.DB, now - RETENTION_MS);
+    await pruneOldDailyStats(env.DB, now);
   },
 };

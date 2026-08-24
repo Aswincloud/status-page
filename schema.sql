@@ -18,6 +18,23 @@ CREATE TABLE IF NOT EXISTS checks (
   source     TEXT NOT NULL DEFAULT 'prober'  -- 'prober' | 'watchdog'
 );
 CREATE INDEX IF NOT EXISTS idx_checks_monitor_ts ON checks(monitor_id, ts);
+-- Retention prunes with `WHERE ts < ?`, which a (monitor_id, ts) index cannot
+-- serve — it degrades to a full SCAN. With the cron running every minute that
+-- was ~176k rows read per tick (~253M/day) to delete nothing. This index makes
+-- it a SEARCH that reads 1 row. Do not drop it.
+CREATE INDEX IF NOT EXISTS idx_checks_ts ON checks(ts);
+
+-- Pre-aggregated per-UTC-day counters, maintained incrementally by the cron
+-- (see rollupDaily). The 90-day bar and the 7d/30d uptime figures read ~90 rows
+-- from here instead of re-scanning every raw check on every page poll.
+-- Survives raw-check pruning, so history outlives RETENTION_MS.
+CREATE TABLE IF NOT EXISTS daily_stats (
+  monitor_id TEXT    NOT NULL,
+  day_idx    INTEGER NOT NULL,          -- floor(ts / 86400000), UTC day
+  total      INTEGER NOT NULL DEFAULT 0,
+  ups        INTEGER NOT NULL DEFAULT 0,
+  PRIMARY KEY (monitor_id, day_idx)
+) WITHOUT ROWID;
 
 CREATE TABLE IF NOT EXISTS incidents (
   id          INTEGER PRIMARY KEY AUTOINCREMENT,
