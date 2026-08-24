@@ -31,6 +31,7 @@ import {
   recentIncidents,
   speedSummary,
   uptimePct,
+  uptimePctDays,
 } from "./stats";
 
 // The single Durable Object instance that links to the home agent.
@@ -367,8 +368,8 @@ export async function handleStatus(req: Request, env: Env, ctx: ExecutionContext
     const currentUp = last ? last.up === 1 && !stale : false;
     const [u24, u7, u30, buckets, spark] = await Promise.all([
       uptimePct(env.DB, m.id, 24 * 60 * 60 * 1000, now),
-      uptimePct(env.DB, m.id, 7 * 24 * 60 * 60 * 1000, now),
-      uptimePct(env.DB, m.id, 30 * 24 * 60 * 60 * 1000, now),
+      uptimePctDays(env.DB, m.id, 7, now),
+      uptimePctDays(env.DB, m.id, 30, now),
       dayBuckets(env.DB, m.id, now),
       latencySeries(env.DB, m.id, now),
     ]);
@@ -399,7 +400,9 @@ export async function handleStatus(req: Request, env: Env, ctx: ExecutionContext
 
   const res = json(
     { generated_at: now, overall, monitors: out, incidents, speed },
-    { headers: { "cache-control": "public, max-age=15" } },
+    // Must be >= the frontend's REFRESH_MS (20s) or the entry expires just
+    // before every poll and the cache never returns a hit.
+    { headers: { "cache-control": "public, max-age=30" } },
   );
   ctx.waitUntil(cache.put(cacheKey, res.clone()));
   return res;

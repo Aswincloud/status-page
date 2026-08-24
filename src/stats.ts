@@ -3,8 +3,10 @@
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
-// Uptime percentage over a trailing window. Computed from the ratio of up checks
-// to total checks. Returns null when there is no data in the window.
+// Uptime percentage over a trailing window, from RAW checks. Exact to the
+// millisecond, but reads every row in the window — only use it for short
+// windows (the 24h figure). For multi-day windows use uptimePctDays, which
+// reads the pre-aggregated daily_stats instead.
 export async function uptimePct(
   db: D1Database,
   monitorId: string,
@@ -24,6 +26,27 @@ export async function uptimePct(
   return (ups / row.total) * 100;
 }
 
+// Uptime percentage over the trailing `days` UTC days, read from daily_stats.
+// ~30 rows instead of ~73k. Day-aligned rather than a precise rolling window:
+// "30d" means the last 30 UTC days including today-so-far.
+export async function uptimePctDays(
+  db: D1Database,
+  monitorId: string,
+  days: number,
+  now: number,
+): Promise<number | null> {
+  const startIdx = Math.floor(now / DAY_MS) - (days - 1);
+  const row = await db
+    .prepare(
+      `SELECT SUM(total) AS total, SUM(ups) AS ups
+       FROM daily_stats WHERE monitor_id = ? AND day_idx >= ?`,
+    )
+    .bind(monitorId, startIdx)
+    .first<{ total: number | null; ups: number | null }>();
+  if (!row || !row.total) return null;
+  return ((row.ups ?? 0) / row.total) * 100;
+}
+
 export interface DayBucket {
   day: number; // unix ms at UTC midnight of that day
   state: "up" | "down" | "partial" | "nodata";
@@ -38,24 +61,23 @@ export async function dayBuckets(
   now: number,
   days = 90,
 ): Promise<DayBucket[]> {
-  const since = now - days * DAY_MS;
-  // Aggregate per UTC day in SQL (indexed scan on monitor_id, ts).
+  // Reads the pre-aggregated rollup (~90 rows). Previously this grouped raw
+  // checks by a computed expression, which the index cannot serve — the plan
+  // fell back to USE TEMP B-TREE FOR GROUP BY and read ~2x the whole table
+  // (~352k rows) on every single page poll.
+  const todayIdx = Math.floor(now / DAY_MS);
+  const startIdx = todayIdx - (days - 1);
   const { results } = await db
     .prepare(
-      `SELECT CAST(ts / 86400000 AS INTEGER) AS day_idx,
-              COUNT(*) AS total, SUM(up) AS ups
-       FROM checks
-       WHERE monitor_id = ? AND ts >= ?
-       GROUP BY day_idx`,
+      `SELECT day_idx, total, ups FROM daily_stats
+       WHERE monitor_id = ? AND day_idx >= ?`,
     )
-    .bind(monitorId, since)
+    .bind(monitorId, startIdx)
     .all<{ day_idx: number; total: number; ups: number | null }>();
 
   const byDay = new Map<number, { total: number; ups: number }>();
   for (const r of results ?? []) byDay.set(r.day_idx, { total: r.total, ups: r.ups ?? 0 });
 
-  const todayIdx = Math.floor(now / DAY_MS);
-  const startIdx = todayIdx - (days - 1);
   const out: DayBucket[] = [];
   for (let idx = startIdx; idx <= todayIdx; idx++) {
     const agg = byDay.get(idx);

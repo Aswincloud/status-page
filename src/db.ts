@@ -53,6 +53,9 @@ export interface IncomingCheck {
 export const STALE_MS = 120_000; // 2 minutes
 // How long raw checks are retained.
 export const RETENTION_MS = 90 * 24 * 60 * 60 * 1000; // 90 days
+// How many UTC days of aggregated history daily_stats keeps (drives the bar).
+export const ROLLUP_RETENTION_DAYS = 90;
+const DAY_MS = 24 * 60 * 60 * 1000;
 
 export async function upsertMonitor(
   db: D1Database,
@@ -135,6 +138,68 @@ export async function resolveIncident(db: D1Database, incidentId: number, at: nu
 
 export async function pruneOldChecks(db: D1Database, olderThan: number): Promise<void> {
   await db.prepare(`DELETE FROM checks WHERE ts < ?`).bind(olderThan).run();
+}
+
+// ---- daily rollup ----
+
+// Fold new checks into daily_stats. Incremental by design: `control.rollup_cursor`
+// holds the highest checks.id already counted, and `id` is the rowid, so
+// `WHERE id > ?` is a seek — each tick reads only the rows written since the last
+// tick (~2), not the whole table. Counters are additive, so a row is never
+// counted twice and pruning raw checks does not disturb history.
+export async function rollupDaily(db: D1Database): Promise<void> {
+  const cur = await db
+    .prepare(`SELECT v FROM control WHERE k = 'rollup_cursor'`)
+    .first<{ v: string }>();
+  const since = cur ? Number(cur.v) || 0 : 0;
+
+  const { results } = await db
+    .prepare(
+      `SELECT monitor_id,
+              CAST(ts / 86400000 AS INTEGER) AS day_idx,
+              COUNT(*) AS total,
+              SUM(up)  AS ups,
+              MAX(id)  AS max_id
+       FROM checks
+       WHERE id > ?
+       GROUP BY monitor_id, day_idx`,
+    )
+    .bind(since)
+    .all<{ monitor_id: string; day_idx: number; total: number; ups: number | null; max_id: number }>();
+
+  const rows = results ?? [];
+  if (rows.length === 0) return;
+
+  let maxId = since;
+  const stmts: D1PreparedStatement[] = [];
+  for (const r of rows) {
+    if (r.max_id > maxId) maxId = r.max_id;
+    stmts.push(
+      db
+        .prepare(
+          `INSERT INTO daily_stats (monitor_id, day_idx, total, ups) VALUES (?, ?, ?, ?)
+           ON CONFLICT(monitor_id, day_idx)
+           DO UPDATE SET total = total + excluded.total, ups = ups + excluded.ups`,
+        )
+        .bind(r.monitor_id, r.day_idx, r.total, r.ups ?? 0),
+    );
+  }
+  // Cursor moves in the SAME batch as the counters, so a mid-way failure cannot
+  // advance it past rows that were never folded in.
+  stmts.push(
+    db
+      .prepare(
+        `INSERT INTO control (k, v) VALUES ('rollup_cursor', ?)
+         ON CONFLICT(k) DO UPDATE SET v = excluded.v`,
+      )
+      .bind(String(maxId)),
+  );
+  await db.batch(stmts);
+}
+
+export async function pruneOldDailyStats(db: D1Database, now: number): Promise<void> {
+  const cutoff = Math.floor(now / DAY_MS) - ROLLUP_RETENTION_DAYS;
+  await db.prepare(`DELETE FROM daily_stats WHERE day_idx < ?`).bind(cutoff).run();
 }
 
 // ---- speed tests ----
