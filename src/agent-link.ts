@@ -50,7 +50,9 @@ export class AgentLink {
           try { server.send(JSON.stringify({ cmd: "pong" })); } catch { /* ignore */ }
         }
       });
-      return new Response(null, { status: 101, webSocket: client });
+      const protocol = req.headers.get("sec-websocket-protocol");
+      const headers = protocol ? { "Sec-WebSocket-Protocol": protocol } : undefined;
+      return new Response(null, { status: 101, headers, webSocket: client });
     }
 
     // Worker → DO: is the agent currently linked?
