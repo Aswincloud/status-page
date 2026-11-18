@@ -16,7 +16,7 @@ const SPEEDTEST = process.env.SPEEDTEST_BIN || "speedtest";
 // Persistent control link: derive the wss:// agent-ws URL from the ingest URL.
 const WS_URL =
   process.env.WS_URL ||
-  INGEST_URL.replace(/^http/, "ws").replace(/\/speedtest$/, `/agent-ws?token=${encodeURIComponent(TOKEN || "")}`);
+  INGEST_URL.replace(/^http/, "ws").replace(/\/speedtest$/, "/agent-ws");
 
 if (!TOKEN) {
   console.error("FATAL: INGEST_TOKEN env var is required.");
@@ -108,7 +108,7 @@ function connect() {
   console.log(`[${new Date().toISOString()}] control link connecting…`);
   let sock;
   try {
-    sock = new WebSocket(WS_URL);
+    sock = new WebSocket(WS_URL, TOKEN);
   } catch (e) {
     scheduleReconnect(`connect threw: ${e.message}`);
     return;

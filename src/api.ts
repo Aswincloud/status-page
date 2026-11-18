@@ -339,11 +339,11 @@ export async function handleRequestTest(req: Request, env: Env): Promise<Respons
   return json({ ok: true, requestedAt: now });
 }
 
-// GET /api/agent-ws — the home agent opens its persistent link here (INGEST_TOKEN
-// via query, since WebSocket clients can't set Authorization headers everywhere).
+// GET /api/agent-ws — the home agent opens its persistent link here. The token is
+// sent as the WebSocket subprotocol rather than a URL query parameter so it is
+// not copied into request URLs and their logs.
 export async function handleAgentWs(req: Request, env: Env): Promise<Response> {
-  const url = new URL(req.url);
-  const token = url.searchParams.get("token") ?? bearer(req);
+  const token = req.headers.get("sec-websocket-protocol") ?? bearer(req);
   if (!env.INGEST_TOKEN || token !== env.INGEST_TOKEN) {
     return new Response("unauthorized", { status: 401 });
   }
