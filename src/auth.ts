@@ -18,6 +18,7 @@ import {
   readSession,
   emailAllowed,
   parseAccessMode,
+  parseAllowlist,
   signToken,
   verifyToken,
   verifyRelay,
@@ -41,19 +42,23 @@ function sessionConfig(env: Env): SessionConfig {
   return { secret: env.SESSION_SECRET ?? "", cookieName: COOKIE, ttlSeconds: SESSION_TTL_SECONDS };
 }
 
+/**
+ * The access policy, failing closed. The auth package reads an EMPTY owner list
+ * as "any authenticated email", so in owners mode a missing OWNER_EMAIL would
+ * let every Google account in. Here an empty list means nobody.
+ */
+function emailPermitted(env: Env, email: string): boolean {
+  const mode = parseAccessMode(env.ACCESS_MODE);
+  if (mode === "owners" && parseAllowlist(env.OWNER_EMAIL).size === 0) return false;
+  return emailAllowed({ mode, email, owners: env.OWNER_EMAIL, domains: env.ACCESS_DOMAINS });
+}
+
 /** The signed-in, allowed email or null. Composes readSession + the access policy. */
 export async function getSession(req: Request, env: Env): Promise<string | null> {
   if (!env.SESSION_SECRET) return null;
   const email = await readSession(sessionConfig(env), req);
   if (!email) return null;
-  return emailAllowed({
-    mode: parseAccessMode(env.ACCESS_MODE),
-    email,
-    owners: env.OWNER_EMAIL,
-    domains: env.ACCESS_DOMAINS,
-  })
-    ? email
-    : null;
+  return emailPermitted(env, email) ? email : null;
 }
 
 /** Is sign-in wired up (broker URL + relay secret + session secret present)? */
@@ -145,12 +150,7 @@ export async function handleCallback(req: Request, env: Env): Promise<Response> 
   if (!expectedNonce || expectedNonce !== claims.nonce) return backHome("state");
 
   // Access policy: owner-only by default for status.
-  const allowed = emailAllowed({
-    mode: parseAccessMode(env.ACCESS_MODE),
-    email: claims.email,
-    owners: env.OWNER_EMAIL,
-    domains: env.ACCESS_DOMAINS,
-  });
+  const allowed = emailPermitted(env, claims.email);
   if (!allowed) return backHome("denied", true);
 
   const headers = new Headers({ Location: origin + "/" });

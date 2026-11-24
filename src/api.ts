@@ -27,6 +27,7 @@ import {
   upsertPendingSubscriber,
 } from "./db";
 import { liveSpeedThreshold, notify, notifyLowSpeed, sendConfirmEmail, sendWelcomeEmail } from "./alerts";
+import { constantTimeEqualString } from "@aswincloud/auth";
 import { getSession, ssoConfigured } from "./auth";
 import {
   dayBuckets,
@@ -103,7 +104,7 @@ export async function applyCheck(
 export async function handleIngest(req: Request, env: Env): Promise<Response> {
   const auth = req.headers.get("authorization") ?? "";
   const token = auth.startsWith("Bearer ") ? auth.slice(7) : "";
-  if (!env.INGEST_TOKEN || token !== env.INGEST_TOKEN) {
+  if (!env.INGEST_TOKEN || !constantTimeEqualString(token, env.INGEST_TOKEN)) {
     return json({ error: "unauthorized" }, { status: 401 });
   }
 
@@ -145,7 +146,7 @@ export async function handleIngest(req: Request, env: Env): Promise<Response> {
 export async function handleSpeedtest(req: Request, env: Env): Promise<Response> {
   const auth = req.headers.get("authorization") ?? "";
   const token = auth.startsWith("Bearer ") ? auth.slice(7) : "";
-  if (!env.INGEST_TOKEN || token !== env.INGEST_TOKEN) {
+  if (!env.INGEST_TOKEN || !constantTimeEqualString(token, env.INGEST_TOKEN)) {
     return json({ error: "unauthorized" }, { status: 401 });
   }
 
@@ -302,7 +303,7 @@ async function authorize(
   env: Env,
 ): Promise<{ ok: boolean; via: "session" | "token" | null }> {
   if (await getSession(req, env)) return { ok: true, via: "session" };
-  if (env.CONTROL_TOKEN && bearer(req) === env.CONTROL_TOKEN) return { ok: true, via: "token" };
+  if (env.CONTROL_TOKEN && constantTimeEqualString(bearer(req), env.CONTROL_TOKEN)) return { ok: true, via: "token" };
   return { ok: false, via: null };
 }
 
@@ -311,7 +312,7 @@ async function authorize(
 // skip opt-in for it) and the live alert threshold (so the owner can edit it).
 export async function handleCanTest(req: Request, env: Env): Promise<Response> {
   const sessionEmail = await getSession(req, env);
-  const ok = !!sessionEmail || (!!env.CONTROL_TOKEN && bearer(req) === env.CONTROL_TOKEN);
+  const ok = !!sessionEmail || (!!env.CONTROL_TOKEN && constantTimeEqualString(bearer(req), env.CONTROL_TOKEN));
   const via = sessionEmail ? "session" : ok ? "token" : null;
   const [linked, threshold] = await Promise.all([
     agentLink(env)
@@ -335,7 +336,7 @@ export async function handleCanTest(req: Request, env: Env): Promise<Response> {
 
 // POST /api/control-check — verify a legacy owner control token (manual unlock).
 export async function handleControlCheck(req: Request, env: Env): Promise<Response> {
-  const ok = !!env.CONTROL_TOKEN && bearer(req) === env.CONTROL_TOKEN;
+  const ok = !!env.CONTROL_TOKEN && constantTimeEqualString(bearer(req), env.CONTROL_TOKEN);
   return json({ ok }, { status: ok ? 200 : 401 });
 }
 
@@ -368,7 +369,7 @@ export async function handleRequestTest(req: Request, env: Env): Promise<Respons
 export async function handleAgentWs(req: Request, env: Env): Promise<Response> {
   const url = new URL(req.url);
   const token = url.searchParams.get("token") ?? bearer(req);
-  if (!env.INGEST_TOKEN || token !== env.INGEST_TOKEN) {
+  if (!env.INGEST_TOKEN || !constantTimeEqualString(token, env.INGEST_TOKEN)) {
     return new Response("unauthorized", { status: 401 });
   }
   return agentLink(env).fetch("https://do/connect", req);
