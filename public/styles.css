@@ -253,6 +253,7 @@ body {
 .status-dot { width: 10px; height: 10px; border-radius: 50%; flex: none; }
 .status-dot.up { background: var(--up); box-shadow: 0 0 0 4px var(--up-soft); }
 .status-dot.down { background: var(--down); box-shadow: 0 0 0 4px var(--down-soft); }
+.status-dot.blocked { background: var(--warn); box-shadow: 0 0 0 4px var(--warn-soft); }
 .card-name { font-weight: 620; font-size: 15.5px; letter-spacing: -0.01em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .card-target { color: var(--text-faint); font-size: 12px; font-family: var(--mono); margin-top: 1px; }
 
@@ -262,6 +263,7 @@ body {
 }
 .pill.up { color: var(--up); background: var(--up-soft); }
 .pill.down { color: var(--down); background: var(--down-soft); }
+.pill.blocked { color: var(--warn); background: var(--warn-soft); }
 
 /* 90-day uptime bar */
 .daybar {
@@ -336,6 +338,10 @@ body {
 
 /* ---- internet speed panel ---- */
 .speed { margin-top: 26px; }
+
+/* ---- services (apps behind the home line) ---- */
+.services { margin-top: 26px; }
+.section-sub { margin: -6px 0 12px; font-size: 13px; color: var(--text-faint); }
 .speed-card {
   padding: 20px 22px 18px;
   border-radius: var(--radius);
@@ -494,8 +500,14 @@ body {
 .incident-icon { width: 8px; height: 8px; border-radius: 50%; flex: none; }
 .incident.ongoing .incident-icon { background: var(--down); box-shadow: 0 0 0 4px var(--down-soft); }
 .incident.resolved .incident-icon { background: var(--up); }
+.incident.ongoing.silent .incident-icon { background: var(--warn); box-shadow: 0 0 0 4px var(--warn-soft); }
 .incident-body { flex: 1; min-width: 0; }
 .incident-name { font-weight: 600; font-size: 14px; }
+.incident-tag {
+  display: inline-block; margin-left: 6px; padding: 1px 7px; border-radius: 999px;
+  font-size: 11px; font-weight: 500; color: var(--text-dim); background: var(--border);
+  vertical-align: 1px;
+}
 .incident-when { color: var(--text-dim); font-size: 12.5px; margin-top: 1px; }
 .incident-dur { color: var(--text-dim); font-size: 12.5px; font-variant-numeric: tabular-nums; flex: none; }
 .incident-dur.ongoing { color: var(--down); font-weight: 600; }

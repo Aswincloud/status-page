@@ -32,12 +32,18 @@ export interface Env {
   SLACK_CHANNEL?: string; // channel ID, e.g. C0XXXXXXXXX
 }
 
+// "internet" monitors stand for the home line itself (drive the headline);
+// "service" monitors are individual apps behind it.
+export type MonitorGroup = "internet" | "service";
+
 export interface MonitorRow {
   id: string;
   name: string;
   type: string;
   target: string;
   created_at: number;
+  grp: MonitorGroup;
+  display: string | null; // public label shown instead of type · target (hides host/port)
 }
 
 export interface IncomingCheck {
@@ -45,6 +51,8 @@ export interface IncomingCheck {
   name: string;
   type: string;
   target: string;
+  group?: MonitorGroup;
+  display?: string | null;
   up: boolean;
   latency_ms: number | null;
 }
@@ -59,19 +67,21 @@ const DAY_MS = 24 * 60 * 60 * 1000;
 
 export async function upsertMonitor(
   db: D1Database,
-  m: { id: string; name: string; type: string; target: string },
+  m: { id: string; name: string; type: string; target: string; grp: MonitorGroup; display: string | null },
   now: number,
 ): Promise<void> {
   await db
     .prepare(
-      `INSERT INTO monitors (id, name, type, target, created_at)
-       VALUES (?, ?, ?, ?, ?)
+      `INSERT INTO monitors (id, name, type, target, created_at, grp, display)
+       VALUES (?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT(id) DO UPDATE SET
          name = excluded.name,
          type = excluded.type,
-         target = excluded.target`,
+         target = excluded.target,
+         grp = excluded.grp,
+         display = excluded.display`,
     )
-    .bind(m.id, m.name, m.type, m.target, now)
+    .bind(m.id, m.name, m.type, m.target, now, m.grp, m.display)
     .run();
 }
 
@@ -94,7 +104,10 @@ export async function insertCheck(
 
 export async function listMonitors(db: D1Database): Promise<MonitorRow[]> {
   const { results } = await db
-    .prepare(`SELECT id, name, type, target, created_at FROM monitors ORDER BY created_at, name`)
+    .prepare(
+      `SELECT id, name, type, target, created_at, grp, display FROM monitors
+       ORDER BY grp = 'internet' DESC, created_at, name`,
+    )
     .all<MonitorRow>();
   return results ?? [];
 }
@@ -114,22 +127,40 @@ export async function latestCheck(
 export async function openIncident(
   db: D1Database,
   monitorId: string,
-): Promise<{ id: number; started_at: number } | null> {
+): Promise<{ id: number; started_at: number; silent: number } | null> {
   return await db
     .prepare(
-      `SELECT id, started_at FROM incidents
+      `SELECT id, started_at, silent FROM incidents
        WHERE monitor_id = ? AND resolved_at IS NULL
        ORDER BY started_at DESC LIMIT 1`,
     )
     .bind(monitorId)
-    .first<{ id: number; started_at: number }>();
+    .first<{ id: number; started_at: number; silent: number }>();
 }
 
-export async function startIncident(db: D1Database, monitorId: string, at: number): Promise<void> {
+// `silent` marks an incident whose alerts were suppressed (a service that went
+// down only because the home internet did), so its recovery stays quiet too.
+export async function startIncident(db: D1Database, monitorId: string, at: number, silent = false): Promise<void> {
   await db
-    .prepare(`INSERT INTO incidents (monitor_id, started_at, resolved_at) VALUES (?, ?, NULL)`)
-    .bind(monitorId, at)
+    .prepare(`INSERT INTO incidents (monitor_id, started_at, resolved_at, silent) VALUES (?, ?, NULL, ?)`)
+    .bind(monitorId, at, silent ? 1 : 0)
     .run();
+}
+
+export async function markIncidentLoud(db: D1Database, incidentId: number): Promise<void> {
+  await db.prepare(`UPDATE incidents SET silent = 0 WHERE id = ?`).bind(incidentId).run();
+}
+
+// Is any internet monitor currently down (open incident)? Used to tell "service
+// broke" apart from "service unreachable because the home line is out".
+export async function internetDown(db: D1Database): Promise<boolean> {
+  const row = await db
+    .prepare(
+      `SELECT 1 FROM incidents i JOIN monitors m ON m.id = i.monitor_id
+       WHERE m.grp = 'internet' AND i.resolved_at IS NULL LIMIT 1`,
+    )
+    .first();
+  return !!row;
 }
 
 export async function resolveIncident(db: D1Database, incidentId: number, at: number): Promise<void> {

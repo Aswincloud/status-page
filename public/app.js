@@ -524,17 +524,30 @@
     const title = $("#overall-title");
     const sub = $("#overall-sub");
     el.className = "overall";
-    const total = data.monitors.length;
-    const up = data.monitors.filter((m) => m.up).length;
+    const line = data.monitors.filter((m) => m.group === "internet");
+    const services = data.monitors.filter((m) => m.group !== "internet");
+    const lineDown = line.find((m) => !m.up);
+    const svcDown = services.filter((m) => !m.up);
 
-    if (data.overall === "operational") {
+    if (data.overall === "major" && lineDown) {
+      el.classList.add("overall--major");
+      title.textContent = "Home internet is down";
+      const since = (data.incidents || []).find((i) => i.monitor_id === lineDown.id && i.resolved_at == null);
+      sub.textContent = since
+        ? `Unreachable since ${fmtClock(since.started_at)} · services behind it are offline too`
+        : "The home connection isn't reachable from outside";
+    } else if (data.overall === "operational") {
       el.classList.add("overall--operational");
       title.textContent = "All systems operational";
-      sub.textContent = total === 1 ? "1 monitor up" : `${up}/${total} monitors up`;
+      sub.textContent = line.length
+        ? `Home internet up · ${services.length} service${services.length === 1 ? "" : "s"} up`
+        : `${data.monitors.length} monitor${data.monitors.length === 1 ? "" : "s"} up`;
     } else if (data.overall === "partial") {
       el.classList.add("overall--partial");
-      title.textContent = "Partial outage";
-      sub.textContent = `${total - up} of ${total} monitors down`;
+      title.textContent = line.length && !lineDown ? "Internet up · service issue" : "Partial outage";
+      sub.textContent = svcDown.length
+        ? `${svcDown.map((m) => m.name).join(", ")} ${svcDown.length === 1 ? "is" : "are"} down`
+        : `${data.monitors.filter((m) => !m.up).length} of ${data.monitors.length} monitors down`;
     } else if (data.overall === "major") {
       el.classList.add("overall--major");
       title.textContent = "Major outage";
@@ -812,12 +825,16 @@
   }
 
   // ---- monitor card ----
-  function renderCard(m) {
+  function renderCard(m, lineDown) {
     const card = document.createElement("div");
-    card.className = "card";
+    card.className = m.group === "internet" ? "card card--line" : "card";
 
-    const statusClass = m.up ? "up" : "down";
-    const statusLabel = m.up ? "Operational" : m.stale ? "No data" : "Down";
+    // A service that's down only because the home line is out reads "Unreachable"
+    // (amber) rather than its own red "Down".
+    const blocked = !m.up && lineDown && m.group !== "internet";
+    const statusClass = m.up ? "up" : blocked ? "blocked" : "down";
+    const statusLabel = m.up ? "Operational" : m.stale ? "No data" : blocked ? "Unreachable" : "Down";
+    const subline = m.display ?? `${m.type} · ${m.target}`;
 
     // day bar
     const dayHtml = m.days
@@ -847,7 +864,7 @@
           <span class="status-dot ${statusClass}"></span>
           <div style="min-width:0">
             <div class="card-name">${escapeHtml(m.name)}</div>
-            <div class="card-target">${escapeHtml(m.type)} · ${escapeHtml(m.target)}</div>
+            <div class="card-target">${escapeHtml(subline)}</div>
           </div>
         </div>
         <span class="pill ${statusClass}">${statusLabel}</span>
@@ -863,7 +880,7 @@
       </div>
 
       <div class="chart-head">
-        <span class="chart-title">Response time</span>
+        <span class="chart-title">${m.group === "internet" ? "Round-trip to home" : "Response time"}</span>
         <span class="chart-now">${lastLatency} · <span style="color:var(--text-faint)">checked ${relTime(m.last_checked)}</span></span>
       </div>
       ${latChart.html}
@@ -902,10 +919,12 @@
       ? fmtDur(Date.now() - inc.started_at)
       : fmtDur(inc.resolved_at - inc.started_at);
     return `
-        <li class="incident ${ongoing ? "ongoing" : "resolved"}">
+        <li class="incident ${ongoing ? "ongoing" : "resolved"}${inc.silent ? " silent" : ""}">
           <span class="incident-icon"></span>
           <div class="incident-body">
-            <div class="incident-name">${escapeHtml(inc.monitor_name)} ${ongoing ? "is down" : "outage"}</div>
+            <div class="incident-name">${escapeHtml(inc.monitor_name)} ${ongoing ? "is down" : "outage"}${
+              inc.silent ? ` <span class="incident-tag">during internet outage</span>` : ""
+            }</div>
             <div class="incident-when">${fmtDate(inc.started_at)}${ongoing ? "" : " → " + fmtDate(inc.resolved_at)}</div>
           </div>
           <div class="incident-dur ${ongoing ? "ongoing" : ""}">${ongoing ? "ongoing · " + dur : dur}</div>
@@ -955,11 +974,20 @@
       const mon = $("#monitors");
       mon.removeAttribute("aria-busy");
       mon.innerHTML = "";
-      if (data.monitors.length === 0) {
+      const line = data.monitors.filter((m) => m.group === "internet");
+      // Older data without groups: show everything in the main list.
+      const services = line.length ? data.monitors.filter((m) => m.group !== "internet") : [];
+      const main = line.length ? line : data.monitors;
+      const lineDown = line.some((m) => !m.up);
+      if (main.length === 0) {
         mon.innerHTML = `<div class="incident-empty">No monitors reporting yet. Start the prober to see data here.</div>`;
       } else {
-        data.monitors.forEach((m) => mon.appendChild(renderCard(m)));
+        main.forEach((m) => mon.appendChild(renderCard(m, lineDown)));
       }
+      const svcList = $("#service-list");
+      svcList.innerHTML = "";
+      services.forEach((m) => svcList.appendChild(renderCard(m, lineDown)));
+      $("#services").hidden = services.length === 0;
 
       renderSpeed(data.speed);
       renderIncidents(data.incidents);

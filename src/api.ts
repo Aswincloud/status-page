@@ -4,6 +4,7 @@ import {
   Env,
   IncomingCheck,
   IncomingSpeedtest,
+  MonitorGroup,
   MonitorRow,
   STALE_MS,
   activateSubscriber,
@@ -12,6 +13,8 @@ import {
   getControl,
   getSubscriberByEmail,
   insertCheck,
+  internetDown,
+  markIncidentLoud,
   insertSpeedtest,
   latestCheck,
   listMonitors,
@@ -47,6 +50,10 @@ const json = (data: unknown, init?: ResponseInit) =>
 
 // Apply one incoming check: record it, and open/close incidents + fire alerts on a
 // state transition. Shared so the cron watchdog can reuse the same logic.
+//
+// A service that drops while the home internet is down is a symptom, not news:
+// its incident is opened `silent` (no alerts either way). If it's still down once
+// the internet is back, it's a real service outage, so it's promoted and alerted.
 export async function applyCheck(
   env: Env,
   monitor: MonitorRow,
@@ -59,23 +66,35 @@ export async function applyCheck(
   await insertCheck(env.DB, monitor.id, ts, up, latencyMs, source);
 
   const wasUp = prev ? prev.up === 1 : true; // assume up before first data point
+  const isService = monitor.grp !== "internet";
   if (wasUp && !up) {
     // up → down: open an incident (guard against duplicates).
     const existing = await openIncident(env.DB, monitor.id);
     if (!existing) {
-      await startIncident(env.DB, monitor.id, ts);
-      await notify(env, monitor, { kind: "down", since: ts });
+      const silent = isService && (await internetDown(env.DB));
+      await startIncident(env.DB, monitor.id, ts, silent);
+      if (!silent) await notify(env, monitor, { kind: "down", since: ts });
     }
   } else if (!wasUp && up) {
     // down → up: resolve the open incident.
     const existing = await openIncident(env.DB, monitor.id);
     if (existing) {
       await resolveIncident(env.DB, existing.id, ts);
-      await notify(env, monitor, {
-        kind: "recovered",
-        since: existing.started_at,
-        durationMs: ts - existing.started_at,
-      });
+      if (!existing.silent) {
+        await notify(env, monitor, {
+          kind: "recovered",
+          since: existing.started_at,
+          durationMs: ts - existing.started_at,
+        });
+      }
+    }
+  } else if (!up && isService) {
+    // still down: if it was silenced by an internet outage that has since ended,
+    // the service is genuinely broken on its own — alert now.
+    const existing = await openIncident(env.DB, monitor.id);
+    if (existing?.silent && !(await internetDown(env.DB))) {
+      await markIncidentLoud(env.DB, existing.id);
+      await notify(env, monitor, { kind: "down", since: existing.started_at });
     }
   }
 }
@@ -100,16 +119,21 @@ export async function handleIngest(req: Request, env: Env): Promise<Response> {
 
   const now = Date.now();
   let accepted = 0;
-  for (const c of body.checks) {
+  const groupOf = (c: IncomingCheck): MonitorGroup => (c?.group === "internet" ? "internet" : "service");
+  // Internet monitors first, so services in the same batch see the fresh line state.
+  const checks = [...body.checks].sort((a, b) => Number(groupOf(b) === "internet") - Number(groupOf(a) === "internet"));
+  for (const c of checks) {
     if (!c || typeof c.id !== "string" || typeof c.up !== "boolean") continue;
-    await upsertMonitor(env.DB, { id: c.id, name: c.name, type: c.type, target: c.target }, now);
     const monitor: MonitorRow = {
       id: c.id,
       name: c.name,
       type: c.type,
       target: c.target,
       created_at: now,
+      grp: groupOf(c),
+      display: typeof c.display === "string" ? c.display : null,
     };
+    await upsertMonitor(env.DB, monitor, now);
     const latency = typeof c.latency_ms === "number" ? Math.round(c.latency_ms) : null;
     await applyCheck(env, monitor, c.up, latency, now, "prober");
     accepted++;
@@ -376,8 +400,11 @@ export async function handleStatus(req: Request, env: Env, ctx: ExecutionContext
     out.push({
       id: m.id,
       name: m.name,
-      type: m.type,
-      target: m.target,
+      group: m.grp,
+      // A `display` label replaces type · target so private hosts/ports stay off the page.
+      type: m.display ? null : m.type,
+      target: m.display ? null : m.target,
+      display: m.display,
       up: currentUp,
       stale,
       last_checked: last?.ts ?? null,
@@ -393,10 +420,13 @@ export async function handleStatus(req: Request, env: Env, ctx: ExecutionContext
     speedSummary(env.DB, now),
   ]);
 
-  // Overall: operational if all up, major if all down, partial otherwise.
+  // Overall: "major" only when the home internet itself is down (everything behind
+  // it is unreachable anyway); a service failing on its own is "partial".
   const total = out.length;
   const upCount = out.filter((m) => m.up).length;
-  const overall = total === 0 ? "unknown" : upCount === total ? "operational" : upCount === 0 ? "major" : "partial";
+  const lineDown = out.some((m) => m.group === "internet" && !m.up);
+  const overall =
+    total === 0 ? "unknown" : lineDown || upCount === 0 ? "major" : upCount === total ? "operational" : "partial";
 
   const res = json(
     { generated_at: now, overall, monitors: out, incidents, speed },

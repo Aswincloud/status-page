@@ -1,10 +1,21 @@
 {
   "ingestUrl": "https://status.aswincloud.com/api/ingest",
   "intervalSeconds": 30,
+  "sampleTimeoutSec": 4,
   "monitors": [
     {
+      "id": "home-internet",
+      "name": "Home Internet",
+      "group": "internet",
+      "type": "tcp",
+      "target": "ssh.aswincloud.com:2222",
+      "freshDns": true,
+      "display": "BSNL fiber · direct reachability check"
+    },
+    {
       "id": "home-network",
-      "name": "Home Network",
+      "name": "Torrent",
+      "group": "service",
       "type": "http",
       "target": "https://torrent.aswincloud.com"
     }

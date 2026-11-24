@@ -6,7 +6,9 @@ CREATE TABLE IF NOT EXISTS monitors (
   name       TEXT NOT NULL,
   type       TEXT NOT NULL,      -- ping | http | tcp
   target     TEXT NOT NULL,
-  created_at INTEGER NOT NULL    -- unix ms
+  created_at INTEGER NOT NULL,   -- unix ms
+  grp        TEXT NOT NULL DEFAULT 'service',  -- 'internet' (the home line) | 'service'
+  display    TEXT                -- public label shown instead of type · target
 );
 
 CREATE TABLE IF NOT EXISTS checks (
@@ -40,7 +42,8 @@ CREATE TABLE IF NOT EXISTS incidents (
   id          INTEGER PRIMARY KEY AUTOINCREMENT,
   monitor_id  TEXT NOT NULL,
   started_at  INTEGER NOT NULL,  -- unix ms
-  resolved_at INTEGER            -- null = ongoing
+  resolved_at INTEGER,           -- null = ongoing
+  silent      INTEGER NOT NULL DEFAULT 0  -- 1 = service outage during an internet outage (not alerted)
 );
 CREATE INDEX IF NOT EXISTS idx_incidents_monitor ON incidents(monitor_id, started_at);
 
@@ -80,5 +83,5 @@ CREATE INDEX IF NOT EXISTS idx_subscribers_status ON subscribers(status);
 
 -- Seed the starter monitor so the page renders something on first paint, before
 -- the prober's first heartbeat arrives. The prober will upsert this same row.
-INSERT OR IGNORE INTO monitors (id, name, type, target, created_at)
-VALUES ('home-network', 'Home Network', 'ping', 'torrent.aswincloud.com', 0);
+INSERT OR IGNORE INTO monitors (id, name, type, target, created_at, grp, display)
+VALUES ('home-internet', 'Home Internet', 'tcp', 'ssh.aswincloud.com:2222', 0, 'internet', 'BSNL fiber · direct reachability check');

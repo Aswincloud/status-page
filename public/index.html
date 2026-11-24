@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Status — aswincloud</title>
-    <meta name="description" content="Live status of the aswincloud home network and services." />
+    <meta name="description" content="Live status of the aswincloud home internet connection and the services behind it." />
     <meta name="color-scheme" content="dark light" />
     <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ccircle cx='50' cy='50' r='44' fill='%2330d158'/%3E%3C/svg%3E" />
     <link rel="stylesheet" href="/styles.css" />
@@ -37,7 +37,7 @@
         </div>
       </section>
 
-      <!-- Monitor cards -->
+      <!-- The home internet line (services behind it are listed further down) -->
       <main id="monitors" class="monitors" aria-busy="true">
         <div class="skeleton-card"></div>
       </main>
@@ -46,6 +46,12 @@
       <section id="speed" class="speed" hidden>
         <h2 class="section-title">Internet speed</h2>
         <div id="speed-card" class="speed-card"></div>
+      </section>
+
+      <section id="services" class="services" hidden>
+        <h2 class="section-title">Services</h2>
+        <p class="section-sub">Apps served from home through Cloudflare. They're unreachable whenever the home internet is down.</p>
+        <div id="service-list" class="monitors"></div>
       </section>
 
       <!-- Incident history -->

@@ -45,14 +45,32 @@ home and pushes heartbeats in.
 
 | What breaks | How it's caught |
 |---|---|
-| 🏠 **Home is down** | The prober's check fails → pushes `down` → recorded, incident opened, alerts fire. |
+| 🌐 **Home internet is down** | The direct TCP check to the home line fails → pushes `down` → recorded, incident opened, alerts fire. Services behind it show *Unreachable* and don't send their own alerts. |
+| 🧩 **One service is down** (line fine) | That service's check fails → banner shows *partial*, the service alerts on its own. |
 | 🖥️ **The prober/server itself dies** | No heartbeats arrive → the Worker's per-minute **cron watchdog** sees stale data (>2 min) and records a synthetic outage. No silent green. |
 
-> **A note on the check type.** The demo monitors `torrent.aswincloud.com`, which is
-> **proxied through Cloudflare**. A `ping` to it would only reach Cloudflare's edge
-> (always up) and show false-green — so the monitor uses an **HTTP check** that flows
-> *through* Cloudflare to the home origin: `200` when home is up, `52x` when it isn't.
-> For a direct (non-proxied) host, `ping` or `tcp` work too. The prober supports all three.
+### Internet vs services
+
+Each monitor has a `group`:
+
+- **`internet`**: the home line itself. It drives the headline (*Home internet is down*).
+  The demo checks **TCP `ssh.aswincloud.com:2222`**. That's a DNS-only name (CNAME →
+  the router's TP-Link DDNS) pointing at the real home IP, with a port forwarded on the
+  router. The connection goes straight to the house, not through Cloudflare. `display`
+  replaces the host and port on the public page, so they aren't shown.
+- **`service`**: apps behind the line, such as `torrent.aswincloud.com`. It's
+  **proxied through Cloudflare**, so it gets an **HTTP check** that flows through the
+  tunnel to the origin (`200` up, `52x` down). A `ping` would only reach Cloudflare's
+  edge and always show green.
+
+**Dynamic home IP:** set `"freshDns": true` on the internet monitor. Each cycle the
+prober follows the CNAME and asks the DDNS provider's **authoritative** nameservers.
+When the ISP hands out a new IP it's picked up on the next check, instead of after the
+15-minute DDNS TTL, which would otherwise look like an outage.
+
+**Flap damping:** when the first sample agrees with the current state it's reported
+straight away (one connection per cycle). Only a possible flip triggers the 5-sample /
+5-second confirmation window, and the state changes only if every sample agrees.
 
 ---
 
@@ -80,7 +98,8 @@ Supported check types: `http` · `tcp` · `ping`.
 
 ```
 wrangler.jsonc     Worker + D1 + cron + static-assets + custom-domain config
-schema.sql         D1 tables + starter monitor seed
+schema.sql         D1 tables + starter monitor seed (fresh installs)
+migrations/        one-off ALTERs for an existing DB (run each once, in order)
 src/
   index.ts         fetch() router + scheduled() cron watchdog
   api.ts           /api/ingest (auth) + /api/status (edge-cached JSON)
@@ -134,7 +153,7 @@ nano .env                       # INGEST_TOKEN = the same value from step 3 abov
 
 # config.json already points at https://status.aswincloud.com/api/ingest
 docker compose up -d
-docker compose logs -f          # expect: "ok — home-network:140ms"
+docker compose logs -f          # expect: "ok — home-internet:43ms  home-network:140ms"
 ```
 
 `restart: unless-stopped` + Docker-on-boot keep it running across reboots and crashes.
@@ -214,14 +233,16 @@ Edit `prober/config.json`, then `docker compose restart`. The new card appears a
 ```json
 {
   "monitors": [
-    { "id": "home-network", "name": "Home Network", "type": "http", "target": "https://torrent.aswincloud.com" },
-    { "id": "jellyfin",     "name": "Jellyfin",     "type": "tcp",  "target": "192.168.1.50:8096" },
-    { "id": "router",       "name": "Router",       "type": "ping", "target": "192.168.1.1" }
+    { "id": "home-internet", "name": "Home Internet", "group": "internet", "type": "tcp",
+      "target": "ssh.aswincloud.com:2222", "freshDns": true, "display": "BSNL fiber · direct reachability check" },
+    { "id": "home-network",  "name": "Torrent",  "group": "service", "type": "http", "target": "https://torrent.aswincloud.com" },
+    { "id": "jellyfin",      "name": "Jellyfin", "group": "service", "type": "http", "target": "https://jellyfin.example.com" }
   ]
 }
 ```
 
 > `ping`/`tcp` to LAN addresses require the prober to have a network route to them.
+> `group` defaults to `service`; `display` (optional) replaces `type · target` on the page.
 > To delete a monitor's history immediately:
 > `npx wrangler d1 execute status-db --remote --command "DELETE FROM monitors WHERE id='jellyfin'; DELETE FROM checks WHERE monitor_id='jellyfin';"`
 

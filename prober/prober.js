@@ -7,6 +7,7 @@
 import { readFileSync } from "node:fs";
 import { execFile } from "node:child_process";
 import net from "node:net";
+import dns from "node:dns";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 
@@ -35,6 +36,52 @@ if (!TOKEN) {
 if (!INGEST_URL || INGEST_URL.includes("PLACEHOLDER")) {
   console.error("FATAL: set ingestUrl in config.json (or INGEST_URL env).");
   process.exit(1);
+}
+
+// ---- fresh DNS for dynamic-IP targets ----
+// A home on a dynamic IP is reached via a DDNS name (e.g. ssh.aswincloud.com →
+// aswincloud.tplinkdns.com, TTL 900). Cached answers can point at the OLD IP for
+// up to 15 min after the ISP reassigns it — a false outage. For monitors with
+// `"freshDns": true` we follow the CNAME and ask the name's authoritative servers
+// directly, so a new IP is seen on the very next cycle. Falls back to the system
+// resolver on any hiccup.
+const nsCache = new Map(); // zone → { servers: [ip], at }
+const NS_CACHE_MS = 60 * 60 * 1000;
+
+async function authoritativeServers(name) {
+  const labels = name.split(".");
+  for (let i = 0; i < labels.length - 1; i++) {
+    const zone = labels.slice(i).join(".");
+    const hit = nsCache.get(zone);
+    if (hit && Date.now() - hit.at < NS_CACHE_MS) return hit.servers;
+    let ns;
+    try { ns = await dns.promises.resolveNs(zone); } catch { continue; }
+    const ips = (await Promise.all(ns.map((h) => dns.promises.resolve4(h).catch(() => [])))).flat();
+    if (ips.length) {
+      nsCache.set(zone, { servers: ips, at: Date.now() });
+      return ips;
+    }
+  }
+  return null;
+}
+
+async function freshResolve(host) {
+  try {
+    let name = host;
+    for (let hops = 0; hops < 5; hops++) {
+      const cname = await dns.promises.resolveCname(name).catch(() => null);
+      if (!cname || !cname.length) break;
+      name = cname[0];
+    }
+    const servers = await authoritativeServers(name);
+    if (!servers) return host;
+    const r = new dns.promises.Resolver({ timeout: 2000, tries: 2 });
+    r.setServers(servers);
+    const [ip] = await r.resolve4(name);
+    return ip || host;
+  } catch {
+    return host; // let the connect resolve it normally
+  }
 }
 
 // ---- check implementations ----
@@ -87,33 +134,39 @@ function checkTcp(host, port, timeoutSec = 5) {
   });
 }
 
-async function runCheck(mon, timeoutSec) {
-  if (mon.type === "ping") return checkPing(mon.target, timeoutSec ?? 3);
+async function runCheck(mon, timeoutSec, addr) {
+  if (mon.type === "ping") return checkPing(addr ?? mon.target, timeoutSec ?? 3);
   if (mon.type === "http") return checkHttp(mon.target, timeoutSec ?? 8);
   if (mon.type === "tcp") {
     const [host, port] = String(mon.target).split(":");
-    return checkTcp(host, Number(port || 80), timeoutSec ?? 5);
+    return checkTcp(addr ?? host, Number(port || 80), timeoutSec ?? 5);
   }
   console.warn(`unknown monitor type '${mon.type}' for ${mon.id}; marking down`);
   return { up: false, latency_ms: null };
 }
 
-// Sample a monitor across the confirm window and return a debounced verdict.
-//   all samples up   → { up: true }   (5s continuously available  → recovered)
-//   all samples down → { up: false }  (5s continuously offline     → outage)
-//   mixed (a blip)   → hold the previous reported state
-// Short-circuits as soon as the window is mixed, so a healthy monitor still
-// finishes in one sample and a flip is only ever reported on a unanimous window.
+// Sample a monitor and return a debounced verdict.
+//   first sample agrees with the reported state → report it (no flip possible)
+//   first sample disagrees → sample across the confirm window; flip only if the
+//     whole window agrees (~5s continuously offline / available), else hold.
+// So a steady monitor costs one probe per cycle, and a flip is only ever
+// reported on a unanimous window.
 async function confirmedCheck(mon) {
   const prev = lastState.has(mon.id) ? lastState.get(mon.id) : true; // assume up before first data
   const gap = CONFIRM_SAMPLES > 1 ? (CONFIRM_SECONDS * 1000) / (CONFIRM_SAMPLES - 1) : 0;
+  const host = String(mon.target).split(":")[0];
+  const addr = mon.freshDns && mon.type !== "http" ? await freshResolve(host) : undefined;
 
-  const first = await runCheck(mon, SAMPLE_TIMEOUT);
+  const first = await runCheck(mon, SAMPLE_TIMEOUT, addr);
+  if (first.up === prev) {
+    lastState.set(mon.id, prev);
+    return { up: prev, latency_ms: prev ? first.latency_ms : null, flapped: false };
+  }
   let lastLatency = first.latency_ms;
 
   for (let i = 1; i < CONFIRM_SAMPLES; i++) {
     await sleep(gap);
-    const r = await runCheck(mon, SAMPLE_TIMEOUT);
+    const r = await runCheck(mon, SAMPLE_TIMEOUT, addr);
     if (r.up !== first.up) {
       // Window disagrees → a blip. Hold previous state; don't flip.
       lastState.set(mon.id, prev);
@@ -133,12 +186,14 @@ async function cycle() {
   const results = await Promise.all(
     cfg.monitors.map(async (mon) => ({ mon, r: await confirmedCheck(mon) })),
   );
-  // What we send the Worker (its schema doesn't include `flapped`).
+  // What we send the Worker (its schema doesn't include `flapped` / `freshDns`).
   const checks = results.map(({ mon, r }) => ({
     id: mon.id,
     name: mon.name,
     type: mon.type,
     target: mon.target,
+    group: mon.group === "internet" ? "internet" : "service",
+    display: mon.display ?? null,
     up: r.up,
     latency_ms: r.latency_ms,
   }));

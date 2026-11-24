@@ -131,6 +131,8 @@ export async function latencySeries(
 export interface IncidentView {
   monitor_id: string;
   monitor_name: string;
+  monitor_group: string;
+  silent: number; // 1 = happened during a home-internet outage (not alerted separately)
   started_at: number;
   resolved_at: number | null;
 }
@@ -226,7 +228,8 @@ export async function recentIncidents(
   const since = now - windowMs;
   const { results } = await db
     .prepare(
-      `SELECT i.monitor_id, m.name AS monitor_name, i.started_at, i.resolved_at
+      `SELECT i.monitor_id, m.name AS monitor_name, m.grp AS monitor_group, i.silent,
+              i.started_at, i.resolved_at
        FROM incidents i JOIN monitors m ON m.id = i.monitor_id
        WHERE i.started_at >= ?
        ORDER BY i.started_at DESC
